@@ -1,0 +1,170 @@
+-- Crear base de datos y usarla
+CREATE DATABASE IF NOT EXISTS omasdb
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_0900_ai_ci;
+USE omasdb;
+
+-- =========================
+--  Catálogos principales
+-- =========================
+
+-- Pacientes
+CREATE TABLE patients (
+  patient_id   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  first_name   VARCHAR(80)  NOT NULL,
+  last_name    VARCHAR(80)  NOT NULL,
+  email        VARCHAR(190) NOT NULL UNIQUE,
+  phone        VARCHAR(32),
+  date_of_birth DATE,
+  created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- Proveedores / Doctores
+CREATE TABLE providers (
+  provider_id   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  display_name  VARCHAR(120) NOT NULL,
+  specialty     VARCHAR(120) NOT NULL,
+  email         VARCHAR(190) NOT NULL UNIQUE,
+  phone         VARCHAR(32),
+  timezone      VARCHAR(50)  DEFAULT 'UTC',
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_provider_specialty (specialty),
+  INDEX idx_provider_name (display_name)
+) ENGINE=InnoDB;
+
+-- Reglas semanales de disponibilidad (F11)
+CREATE TABLE provider_availability (
+  availability_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  provider_id     BIGINT UNSIGNED NOT NULL,
+  weekday         TINYINT UNSIGNED NOT NULL COMMENT '0=Sun .. 6=Sat',
+  start_time      TIME NOT NULL,
+  end_time        TIME NOT NULL,
+  location        VARCHAR(120),
+  created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_avail_provider
+    FOREIGN KEY (provider_id) REFERENCES providers(provider_id) ON DELETE CASCADE,
+  CONSTRAINT chk_avail_time_range CHECK (start_time < end_time)
+) ENGINE=InnoDB;
+
+-- Excepciones de disponibilidad (vacaciones, bloqueos, etc.)
+CREATE TABLE provider_exceptions (
+  exception_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  provider_id  BIGINT UNSIGNED NOT NULL,
+  start_at     DATETIME NOT NULL,
+  end_at       DATETIME NOT NULL,
+  reason       VARCHAR(160),
+  is_blocking  BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_exc_provider
+    FOREIGN KEY (provider_id) REFERENCES providers(provider_id) ON DELETE CASCADE,
+  CONSTRAINT chk_exc_time_range CHECK (start_at < end_at),
+  INDEX idx_exc_provider_time (provider_id, start_at, end_at)
+) ENGINE=InnoDB;
+
+-- =========================
+--  Núcleo de operaciones
+-- =========================
+
+-- Citas (F4–F5–F8–F19)
+CREATE TABLE appointments (
+  appointment_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  patient_id     BIGINT UNSIGNED NOT NULL,
+  provider_id    BIGINT UNSIGNED NOT NULL,
+  start_at       DATETIME NOT NULL,
+  end_at         DATETIME NOT NULL,
+  status         ENUM('booked','rescheduled','canceled','completed','no_show')
+                 NOT NULL DEFAULT 'booked',
+  outcome_note   VARCHAR(500),
+  created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_appt_patient
+    FOREIGN KEY (patient_id)  REFERENCES patients(patient_id)  ON DELETE CASCADE,
+  CONSTRAINT fk_appt_provider
+    FOREIGN KEY (provider_id) REFERENCES providers(provider_id) ON DELETE CASCADE,
+  CONSTRAINT chk_appt_time_range CHECK (start_at < end_at),
+  UNIQUE KEY uq_provider_slot (provider_id, start_at),
+  INDEX idx_patient_time (patient_id, start_at),
+  INDEX idx_provider_time (provider_id, start_at)
+) ENGINE=InnoDB;
+
+-- Pagos / cuentas (opcional) 
+CREATE TABLE payments (
+  payment_id      BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  appointment_id  BIGINT UNSIGNED NOT NULL,
+  amount          DECIMAL(10,2) NOT NULL,
+  currency        CHAR(3) NOT NULL DEFAULT 'MXN',
+  status          ENUM('pending','paid','refunded','failed')
+                  NOT NULL DEFAULT 'pending',
+  provider_account VARCHAR(120),
+  created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_pay_appt
+    FOREIGN KEY (appointment_id) REFERENCES appointments(appointment_id) ON DELETE CASCADE,
+  INDEX idx_pay_status_created (status, created_at)
+) ENGINE=InnoDB;
+
+-- Preferencias de notificación (F14)
+CREATE TABLE notification_preferences (
+  pref_id   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_type ENUM('patient','provider') NOT NULL,
+  user_id   BIGINT UNSIGNED NOT NULL,
+  channel   ENUM('email','sms','push') NOT NULL,
+  lead_minutes INT UNSIGNED NOT NULL DEFAULT 1440,
+  enabled   BOOLEAN NOT NULL DEFAULT TRUE,
+  UNIQUE KEY uq_pref (user_type, user_id, channel),
+  INDEX idx_user_prefs (user_type, user_id)
+) ENGINE=InnoDB;
+
+-- Bandeja de salida / tracking de notificaciones (F15)
+CREATE TABLE notifications_outbox (
+  notif_id      BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  appointment_id BIGINT UNSIGNED,
+  channel       ENUM('email','sms','push') NOT NULL,
+  template      VARCHAR(80) NOT NULL,
+  payload       JSON,
+  send_after    DATETIME NOT NULL,
+  status        ENUM('queued','sending','sent','failed')
+                NOT NULL DEFAULT 'queued',
+  last_error    TEXT,
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_notif_appt
+    FOREIGN KEY (appointment_id) REFERENCES appointments(appointment_id) ON DELETE SET NULL,
+  INDEX idx_outbox_status_time (status, send_after)
+) ENGINE=InnoDB;
+
+-- Bitácora de auditoría (F16)
+CREATE TABLE audit_logs (
+  audit_id    BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  actor_type  ENUM('patient','provider','admin','system') NOT NULL,
+  actor_id    BIGINT UNSIGNED,
+  action      VARCHAR(80) NOT NULL,
+  entity_type VARCHAR(80) NOT NULL,
+  entity_id   BIGINT UNSIGNED,
+  ip          VARCHAR(45),
+  metadata    JSON,
+  event_ts    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_audit_entity (entity_type, entity_id, event_ts),
+  INDEX idx_audit_actor  (actor_type, actor_id,  event_ts)
+) ENGINE=InnoDB;
+
+-- =========================
+--  Datos de prueba mínimos
+-- =========================
+INSERT INTO patients (first_name, last_name, email, phone, date_of_birth)
+VALUES ('Juan','Pérez','juan.perez@example.com','+52-555-123-4567','1995-03-10');
+
+INSERT INTO providers (display_name, specialty, email, phone, timezone)
+VALUES ('Dra. López','Cardiology','dra.lopez@clinic.mx','+52-555-987-6543','America/Mexico_City');
+
+INSERT INTO provider_availability (provider_id, weekday, start_time, end_time, location)
+VALUES (1, 1, '09:00:00','13:00:00','Consultorio A');
+
+INSERT INTO appointments (patient_id, provider_id, start_at, end_at, status)
+VALUES (1, 1, '2025-10-20 10:00:00','2025-10-20 10:30:00','booked');
+
+INSERT INTO notification_preferences (user_type, user_id, channel, lead_minutes)
+VALUES ('patient', 1, 'email', 1440),
+       ('provider', 1, 'sms', 120);

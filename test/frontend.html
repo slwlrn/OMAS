@@ -159,6 +159,7 @@
                       <th>Inicio</th>
                       <th>Fin</th>
                       <th>Estado</th>
+                      <th class="text-center">Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -212,9 +213,11 @@
        * Helper para capturar errores fetch y lanzar alertas visibles.
        */
       async function handleResponse(response) {
+        const contentType = response.headers.get("content-type") || "";
+
         if (!response.ok) {
           let message = `Error ${response.status}`;
-          const contentType = response.headers.get("content-type") || "";
+
           if (contentType.includes("application/json")) {
             try {
               const data = await response.json();
@@ -228,11 +231,25 @@
               message = text;
             }
           }
+
           showFeedback(message, "danger");
           alert(message);
           throw new Error(message);
         }
-        return response.json();
+
+        if (response.status === 204) {
+          return null;
+        }
+
+        if (contentType.includes("application/json")) {
+          return response.json();
+        }
+
+        if (contentType.startsWith("text/")) {
+          return response.text();
+        }
+
+        return null;
       }
 
       // ========== Gestión de pacientes ==========
@@ -341,6 +358,8 @@
       }
 
       // ========== Gestión de citas ==========
+      const CANCELABLE_STATUSES = new Set(["booked", "rescheduled"]);
+
       async function loadAppointments() {
         try {
           const response = await fetch(`${API_BASE}/appointments`);
@@ -349,6 +368,7 @@
           appointmentsTableBody.innerHTML = "";
           appointments.forEach((appointment) => {
             const row = document.createElement("tr");
+            const isCancelable = CANCELABLE_STATUSES.has(appointment.status);
             row.innerHTML = `
               <td>${appointment.appointment_id}</td>
               <td>${appointment.patient_id}</td>
@@ -356,6 +376,13 @@
               <td>${appointment.start_at}</td>
               <td>${appointment.end_at}</td>
               <td><span class="badge text-bg-light">${appointment.status}</span></td>
+              <td class="text-center">
+                ${
+                  isCancelable
+                    ? `<button class="btn btn-sm btn-outline-warning" data-cancel-id="${appointment.appointment_id}">Cancelar</button>`
+                    : ""
+                }
+              </td>
             `;
             appointmentsTableBody.appendChild(row);
           });
@@ -501,6 +528,24 @@
         }
       }
 
+      async function cancelAppointment(appointmentId) {
+        if (!confirm("¿Cancelar la cita seleccionada?")) {
+          return;
+        }
+
+        try {
+          const response = await fetch(`${API_BASE}/appointments/${appointmentId}/cancel`, {
+            method: "POST",
+          });
+
+          await handleResponse(response);
+          showFeedback("Cita cancelada correctamente", "info");
+          await loadAppointments();
+        } catch (error) {
+          console.error("Error cancelando cita", error);
+        }
+      }
+
       // ========== Listeners y arranque ==========
       document.addEventListener("DOMContentLoaded", () => {
         loadPatients();
@@ -522,6 +567,13 @@
           if (!button) return;
           const patientId = button.getAttribute("data-id");
           deletePatient(patientId);
+        });
+
+        appointmentsTableBody.addEventListener("click", (event) => {
+          const button = event.target.closest("button[data-cancel-id]");
+          if (!button) return;
+          const appointmentId = button.getAttribute("data-cancel-id");
+          cancelAppointment(appointmentId);
         });
 
         [appointmentDateInput, appointmentStartTimeInput].forEach((field) => {

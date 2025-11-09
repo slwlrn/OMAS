@@ -105,6 +105,22 @@ def coerce_payload(model, data):
             raise ValueError(f"Invalid value for {key}: {exc}") from exc
     return data
 
+
+def appointment_overlaps(db_session, provider_id, start_at, end_at, exclude_id=None):
+    """Return True if the provider already has a blocking appointment."""
+    if not all([provider_id, start_at, end_at]):
+        return False
+
+    query = db_session.query(Appointment).filter(
+        Appointment.provider_id == provider_id,
+        Appointment.status.in_(["booked", "rescheduled"]),
+        Appointment.start_at < end_at,
+        Appointment.end_at > start_at,
+    )
+    if exclude_id is not None:
+        query = query.filter(Appointment.appointment_id != exclude_id)
+    return query.first() is not None
+
 # ========= Modelos =========
 class Patient(Base):
     __tablename__ = "patients"
@@ -247,7 +263,22 @@ def register_crud(path: str, model, pk_column: str):
         data = request.get_json(force=True, silent=False)
         db = SessionLocal()
         try:
-            obj = model(**coerce_payload(model, data))
+            payload = coerce_payload(model, data)
+            if model is Appointment:
+                start_at = payload.get("start_at")
+                end_at = payload.get("end_at")
+                provider_id = payload.get("provider_id")
+                if not start_at or not end_at:
+                    db.rollback()
+                    return jsonify({"error": "La cita debe incluir hora de inicio y fin."}), 400
+                if start_at >= end_at:
+                    db.rollback()
+                    return jsonify({"error": "La hora de inicio debe ser anterior a la de fin."}), 400
+                if appointment_overlaps(db, provider_id, start_at, end_at):
+                    db.rollback()
+                    return jsonify({"error": "El proveedor ya tiene una cita reservada en ese horario."}), 409
+
+            obj = model(**payload)
             db.add(obj)
             db.commit()
             db.refresh(obj)
@@ -278,7 +309,23 @@ def register_crud(path: str, model, pk_column: str):
             obj = db.get(model, pk)
             if not obj:
                 return jsonify({"error": f"{table} not found"}), 404
-            for k, v in coerce_payload(model, data).items():
+            payload = coerce_payload(model, data)
+
+            if model is Appointment:
+                provider_id = payload.get("provider_id", obj.provider_id)
+                start_at = payload.get("start_at", obj.start_at)
+                end_at = payload.get("end_at", obj.end_at)
+                if not start_at or not end_at:
+                    db.rollback()
+                    return jsonify({"error": "La cita debe incluir hora de inicio y fin."}), 400
+                if start_at >= end_at:
+                    db.rollback()
+                    return jsonify({"error": "La hora de inicio debe ser anterior a la de fin."}), 400
+                if appointment_overlaps(db, provider_id, start_at, end_at, exclude_id=pk):
+                    db.rollback()
+                    return jsonify({"error": "El proveedor ya tiene una cita reservada en ese horario."}), 409
+
+            for k, v in payload.items():
                 if hasattr(obj, k):
                     setattr(obj, k, v)
             db.commit()
@@ -299,6 +346,14 @@ def register_crud(path: str, model, pk_column: str):
             obj = db.get(model, pk)
             if not obj:
                 return jsonify({"error": f"{table} not found"}), 404
+            if model is Patient:
+                has_booked = db.query(Appointment).filter(
+                    Appointment.patient_id == pk,
+                    Appointment.status == "booked"
+                ).first()
+                if has_booked:
+                    db.rollback()
+                    return jsonify({"error": "No se puede eliminar el paciente porque tiene una cita activa."}), 400
             db.delete(obj)
             db.commit()
             return "", 204
@@ -314,6 +369,26 @@ def register_crud(path: str, model, pk_column: str):
 
 for path, model, pk in RESOURCES:
     register_crud(path, model, pk)
+
+
+@app.post("/appointments/<int:pk>/cancel")
+def cancel_appointment(pk):
+    db = SessionLocal()
+    try:
+        appointment = db.get(Appointment, pk)
+        if not appointment:
+            db.rollback()
+            return jsonify({"error": "La cita solicitada no existe."}), 404
+        if appointment.status == "canceled":
+            db.rollback()
+            return jsonify(to_dict(appointment))
+        appointment.status = "canceled"
+        db.commit()
+        db.refresh(appointment)
+        return jsonify(to_dict(appointment))
+    finally:
+        db.close()
+
 
 @app.get("/")
 def serve_frontend():

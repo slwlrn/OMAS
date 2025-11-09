@@ -314,7 +314,29 @@
         if (!value) {
           return "";
         }
-        return String(value).slice(0, 5);
+
+        if (value instanceof Date) {
+          return value.toLocaleTimeString("es-ES", {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+        }
+
+        const stringValue = String(value);
+        const timeMatch = stringValue.match(/(\d{2}:\d{2})/);
+        if (timeMatch) {
+          return timeMatch[1];
+        }
+
+        const parsed = parseDateTimeString(stringValue);
+        if (parsed) {
+          return parsed.toLocaleTimeString("es-ES", {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+        }
+
+        return stringValue;
       }
 
       function formatTimeRange(start, end) {
@@ -324,6 +346,23 @@
           return `${startPart} - ${endPart}`;
         }
         return startPart || endPart || "Horario sin definir";
+      }
+
+      function formatDateDisplay(value) {
+        if (!value) {
+          return "";
+        }
+
+        const date = parseDateTimeString(`${value}T00:00:00`);
+        if (!date) {
+          return value;
+        }
+
+        return date.toLocaleDateString("es-ES", {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+        });
       }
 
       function formatDateTimeDisplay(value) {
@@ -405,6 +444,66 @@
           .join("");
       }
 
+      function renderUpcomingSlots(slots, timezone) {
+        if (!Array.isArray(slots) || slots.length === 0) {
+          return "";
+        }
+
+        const slotsByDate = new Map();
+
+        slots.forEach((slot) => {
+          const dateKey = slot.date || (slot.start_at ? String(slot.start_at).slice(0, 10) : null);
+          if (!dateKey) {
+            return;
+          }
+
+          if (!slotsByDate.has(dateKey)) {
+            slotsByDate.set(dateKey, []);
+          }
+
+          slotsByDate.get(dateKey).push(slot);
+        });
+
+        if (!slotsByDate.size) {
+          return "";
+        }
+
+        const timezoneNotice = timezone
+          ? `<p class="text-muted small mb-2">Horario en ${escapeHtml(timezone)}.</p>`
+          : "";
+
+        const items = Array.from(slotsByDate.entries())
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+          .map(([dateKey, daySlots]) => {
+            const dayLabel = formatDateDisplay(dateKey);
+            const rows = daySlots
+              .slice()
+              .sort((a, b) => String(a.start_at).localeCompare(String(b.start_at)))
+              .map((slot) => {
+                const summary = formatTimeRange(slot.start_at, slot.end_at);
+                return `<li class="list-group-item px-0 py-1 d-flex justify-content-between align-items-center">
+                  <span>${escapeHtml(summary)}</span>
+                  <span class="badge text-bg-light">${escapeHtml(`${slot.slot_minutes || 30} min`)}</span>
+                </li>`;
+              })
+              .join("");
+
+            return `<div class="mb-3">
+              <h4 class="h6 mb-1">${escapeHtml(dayLabel || dateKey)}</h4>
+              <ul class="list-group list-group-flush">
+                ${rows}
+              </ul>
+            </div>`;
+          })
+          .join("");
+
+        return `<div>
+          <h3 class="h6 text-success">Próximos horarios disponibles</h3>
+          ${timezoneNotice}
+          ${items}
+        </div>`;
+      }
+
       function renderAvailabilityExceptions(exceptions) {
         if (!Array.isArray(exceptions)) {
           return "";
@@ -475,9 +574,11 @@
             data?.provider?.display_name || data?.provider?.name || `Proveedor ${providerId}`;
           providerAvailabilityProviderName.textContent = providerName;
 
+          const timezone = data?.timezone || data?.provider?.timezone;
+          const upcomingHtml = renderUpcomingSlots(data?.upcoming_slots, timezone);
           const weeklyHtml = renderWeeklyAvailability(data?.weekly);
           const exceptionsHtml = renderAvailabilityExceptions(data?.exceptions);
-          const sections = [weeklyHtml, exceptionsHtml].filter(Boolean);
+          const sections = [upcomingHtml, weeklyHtml, exceptionsHtml].filter(Boolean);
           providerAvailabilityContent.innerHTML =
             sections.join('<hr class="my-2" />') ||
             '<p class="mb-0 text-muted">Este proveedor no tiene disponibilidad configurada.</p>';

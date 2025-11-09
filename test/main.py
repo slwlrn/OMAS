@@ -1,6 +1,6 @@
 # main.py
 import os
-from datetime import datetime, date, time, timezone
+from datetime import datetime, date, time, timezone, timedelta
 from decimal import Decimal
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
@@ -10,6 +10,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy.exc import IntegrityError
+from zoneinfo import ZoneInfo
 
 # ========= Config =========
 DATABASE_URL = os.getenv(
@@ -393,11 +394,131 @@ def provider_availability(provider_id):
             .all()
         )
 
+        provider_timezone = "UTC"
+        if provider.timezone:
+            try:
+                ZoneInfo(provider.timezone)
+                provider_timezone = provider.timezone
+            except Exception:
+                provider_timezone = "UTC"
+        tz = ZoneInfo(provider_timezone)
+        now_local = datetime.now(tz)
+        now_naive = now_local.replace(tzinfo=None)
+
+        search_days = 14
+        slot_minutes = 30
+        slot_delta = timedelta(minutes=slot_minutes)
+
+        start_search_date = now_local.date()
+        end_search_date = start_search_date + timedelta(days=search_days)
+
+        start_window = datetime.combine(start_search_date, time.min)
+        end_window = datetime.combine(end_search_date, time.max)
+
+        busy_appointments = (
+            db.query(Appointment)
+            .filter(
+                Appointment.provider_id == provider_id,
+                Appointment.status.in_(["booked", "rescheduled"]),
+                Appointment.start_at < end_window,
+                Appointment.end_at > start_window,
+            )
+            .all()
+        )
+
+        def to_weekday_candidates(value):
+            candidates = []
+            try:
+                weekday_value = int(value)
+            except (TypeError, ValueError):
+                return candidates
+
+            if 0 <= weekday_value <= 6:
+                candidates.append(weekday_value)
+            if 1 <= weekday_value <= 7:
+                candidates.append((weekday_value - 1) % 7)
+            if weekday_value == 0:
+                candidates.append(6)
+            if weekday_value == 7:
+                candidates.append(6)
+            # deduplicate preserving order
+            seen = set()
+            result = []
+            for item in candidates:
+                if item not in seen:
+                    seen.add(item)
+                    result.append(item)
+            return result
+
+        def overlaps(start_a, end_a, start_b, end_b):
+            return start_a < end_b and end_a > start_b
+
+        blocking_exceptions = [exc for exc in exceptions if exc.is_blocking is not False]
+
+        busy_ranges = []
+        for appointment in busy_appointments:
+            busy_ranges.append((appointment.start_at, appointment.end_at))
+        for exception in blocking_exceptions:
+            busy_ranges.append((exception.start_at, exception.end_at))
+
+        upcoming_slots = []
+
+        weekly_rules = list(weekly)
+
+        for day_offset in range(search_days + 1):
+            current_date = start_search_date + timedelta(days=day_offset)
+            current_weekday = current_date.weekday()
+
+            matching_rules = [
+                rule
+                for rule in weekly_rules
+                if current_weekday in to_weekday_candidates(rule.weekday)
+            ]
+
+            if not matching_rules:
+                continue
+
+            for rule in matching_rules:
+                if not isinstance(rule.start_time, time) or not isinstance(rule.end_time, time):
+                    continue
+
+                rule_start = datetime.combine(current_date, rule.start_time)
+                rule_end = datetime.combine(current_date, rule.end_time)
+
+                current_slot_start = rule_start
+                while current_slot_start + slot_delta <= rule_end:
+                    current_slot_end = current_slot_start + slot_delta
+
+                    if current_slot_end <= now_naive:
+                        current_slot_start += slot_delta
+                        continue
+
+                    is_busy = any(
+                        overlaps(current_slot_start, current_slot_end, busy_start, busy_end)
+                        for busy_start, busy_end in busy_ranges
+                    )
+                    if not is_busy:
+                        upcoming_slots.append(
+                            {
+                                "start_at": serialize_value(current_slot_start),
+                                "end_at": serialize_value(current_slot_end),
+                                "date": serialize_value(current_date),
+                                "weekday": current_weekday,
+                                "slot_minutes": slot_minutes,
+                            }
+                        )
+
+                    current_slot_start += slot_delta
+
+        upcoming_slots.sort(key=lambda slot: slot["start_at"])
+
         return jsonify(
             {
                 "provider": to_dict(provider),
                 "weekly": [to_dict(item) for item in weekly],
                 "exceptions": [to_dict(item) for item in exceptions],
+                "upcoming_slots": upcoming_slots,
+                "timezone": provider_timezone,
             }
         )
     finally:

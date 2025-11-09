@@ -371,6 +371,39 @@ for path, model, pk in RESOURCES:
     register_crud(path, model, pk)
 
 
+@app.get("/providers/<int:provider_id>/availability")
+def provider_availability(provider_id):
+    db = SessionLocal()
+    try:
+        provider = db.get(Provider, provider_id)
+        if not provider:
+            return jsonify({"error": "El proveedor solicitado no existe."}), 404
+
+        weekly = (
+            db.query(ProviderAvailability)
+            .filter(ProviderAvailability.provider_id == provider_id)
+            .order_by(ProviderAvailability.weekday, ProviderAvailability.start_time)
+            .all()
+        )
+
+        exceptions = (
+            db.query(ProviderException)
+            .filter(ProviderException.provider_id == provider_id)
+            .order_by(ProviderException.start_at)
+            .all()
+        )
+
+        return jsonify(
+            {
+                "provider": to_dict(provider),
+                "weekly": [to_dict(item) for item in weekly],
+                "exceptions": [to_dict(item) for item in exceptions],
+            }
+        )
+    finally:
+        db.close()
+
+
 @app.post("/appointments/<int:pk>/cancel")
 def cancel_appointment(pk):
     db = SessionLocal()

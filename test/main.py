@@ -210,7 +210,7 @@ class AuditLog(Base):
     entity_type= Column(String(80), nullable=False)
     entity_id  = Column(BigInteger)
     ip         = Column(String(45))
-    metadata   = Column(JSON)
+    metadata_  = Column("metadata", JSON)
     event_ts   = Column(DateTime, default=datetime.utcnow)
 
 # ========= Flask + CRUD genérico =========

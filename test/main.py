@@ -10,7 +10,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy.exc import IntegrityError
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # ========= Config =========
 DATABASE_URL = os.getenv(
@@ -395,13 +395,13 @@ def provider_availability(provider_id):
         )
 
         provider_timezone = "UTC"
+        tz = timezone.utc
         if provider.timezone:
             try:
-                ZoneInfo(provider.timezone)
+                tz = ZoneInfo(provider.timezone)
                 provider_timezone = provider.timezone
-            except Exception:
-                provider_timezone = "UTC"
-        tz = ZoneInfo(provider_timezone)
+            except ZoneInfoNotFoundError:
+                pass
         now_local = datetime.now(tz)
         now_naive = now_local.replace(tzinfo=None)
 

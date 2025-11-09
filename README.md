@@ -21,3 +21,6 @@
 2. Verifica que la tabla de pacientes carga los registros actuales y que puedes agregar un nuevo paciente con el formulario.
 3. Comprueba que los selectores de citas se llenan automáticamente y crea una cita de prueba para confirmar que los cambios se reflejan en la tabla.
 4. Asegúrate de que los mensajes de retroalimentación verde/rojo aparezcan tras cada acción para confirmar que la API respondió correctamente.
+5. Cancela una cita existente desde el botón de la tabla y verifica que el estado cambie a `canceled`.
+6. Intenta agendar otra cita con el mismo proveedor y un horario ya ocupado para comprobar que la interfaz muestre el error de horario bloqueado.
+7. Trata de eliminar un paciente con una cita en estado `booked` y confirma que la API impide la operación.

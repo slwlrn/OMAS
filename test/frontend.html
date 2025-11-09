@@ -173,6 +173,8 @@
       const appointmentsTableBody = document.querySelector("#appointments-table tbody");
       const appointmentPatientSelect = document.getElementById("appointment-patient");
       const appointmentProviderSelect = document.getElementById("appointment-provider");
+      const appointmentStartInput = document.getElementById("appointment-start");
+      const appointmentEndInput = document.getElementById("appointment-end");
 
       /**
        * Muestra mensajes de estado globales en la página (éxito o error).
@@ -190,8 +192,21 @@
        */
       async function handleResponse(response) {
         if (!response.ok) {
-          const text = await response.text();
-          const message = text || `Error ${response.status}`;
+          let message = `Error ${response.status}`;
+          const contentType = response.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            try {
+              const data = await response.json();
+              message = data.error || JSON.stringify(data);
+            } catch (err) {
+              message = `Error ${response.status}`;
+            }
+          } else {
+            const text = await response.text();
+            if (text) {
+              message = text;
+            }
+          }
           showFeedback(message, "danger");
           alert(message);
           throw new Error(message);
@@ -328,17 +343,44 @@
         }
       }
 
+      function resetAppointmentFieldValidity() {
+        [
+          appointmentPatientSelect,
+          appointmentProviderSelect,
+          appointmentStartInput,
+          appointmentEndInput,
+        ].forEach((field) => field.classList.remove("is-invalid"));
+      }
+
+      function flagMissingAppointmentFields(missingFields) {
+        missingFields.forEach(({ element }) => {
+          element.classList.add("is-invalid");
+        });
+      }
+
       async function createAppointment(event) {
         event.preventDefault();
 
+        resetAppointmentFieldValidity();
+
         const patientId = appointmentPatientSelect.value;
         const providerId = appointmentProviderSelect.value;
-        const startAt = document.getElementById("appointment-start").value;
-        const endAt = document.getElementById("appointment-end").value;
+        const startAt = appointmentStartInput.value;
+        const endAt = appointmentEndInput.value;
 
-        if (!patientId || !providerId || !startAt || !endAt) {
-          showFeedback("Completa todos los campos de la cita", "warning");
-          alert("Completa todos los campos de la cita");
+        const missingFields = [
+          { element: appointmentPatientSelect, label: "Paciente", value: patientId },
+          { element: appointmentProviderSelect, label: "Proveedor", value: providerId },
+          { element: appointmentStartInput, label: "Inicio", value: startAt },
+          { element: appointmentEndInput, label: "Fin", value: endAt },
+        ].filter((field) => !field.value);
+
+        if (missingFields.length) {
+          flagMissingAppointmentFields(missingFields);
+          const missingLabels = missingFields.map(({ label }) => label).join(", ");
+          const message = `Completa los siguientes campos: ${missingLabels}`;
+          showFeedback(message, "warning");
+          alert(message);
           return;
         }
 
@@ -349,8 +391,8 @@
             body: JSON.stringify({
               patient_id: Number(patientId),
               provider_id: Number(providerId),
-              start_at: new Date(startAt).toISOString(),
-              end_at: new Date(endAt).toISOString(),
+              start_at: startAt,
+              end_at: endAt,
             }),
           });
 

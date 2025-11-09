@@ -1,6 +1,6 @@
 # main.py
 import os
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timezone
 from decimal import Decimal
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
@@ -34,6 +34,76 @@ def serialize_value(v):
 
 def to_dict(obj):
     return {c.name: serialize_value(getattr(obj, c.name)) for c in obj.__table__.columns}
+
+
+def normalize_datetime(value):
+    """Return a naive datetime instance from supported inputs."""
+    if value is None or isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+    raise ValueError(f"Unsupported datetime value: {value!r}")
+
+
+def normalize_date(value):
+    if value is None or isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        return date.fromisoformat(value)
+    raise ValueError(f"Unsupported date value: {value!r}")
+
+
+def normalize_time(value):
+    if value is None or isinstance(value, time):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        if len(value) == 5:
+            value = f"{value}:00"
+        return time.fromisoformat(value)
+    raise ValueError(f"Unsupported time value: {value!r}")
+
+
+def normalize_numeric(value):
+    if value is None or isinstance(value, Decimal):
+        return value
+    if isinstance(value, (int, float, str)):
+        return Decimal(str(value))
+    raise ValueError(f"Unsupported numeric value: {value!r}")
+
+
+def coerce_payload(model, data):
+    """Convert string payload values to the SQLAlchemy column python types."""
+    for column in model.__table__.columns:
+        key = column.name
+        if key not in data:
+            continue
+        value = data[key]
+        try:
+            if isinstance(column.type, DateTime):
+                data[key] = normalize_datetime(value)
+            elif isinstance(column.type, Date):
+                data[key] = normalize_date(value)
+            elif isinstance(column.type, Time):
+                data[key] = normalize_time(value)
+            elif isinstance(column.type, Numeric):
+                data[key] = normalize_numeric(value)
+        except ValueError as exc:
+            raise ValueError(f"Invalid value for {key}: {exc}") from exc
+    return data
 
 # ========= Modelos =========
 class Patient(Base):
@@ -177,7 +247,7 @@ def register_crud(path: str, model, pk_column: str):
         data = request.get_json(force=True, silent=False)
         db = SessionLocal()
         try:
-            obj = model(**data)
+            obj = model(**coerce_payload(model, data))
             db.add(obj)
             db.commit()
             db.refresh(obj)
@@ -185,6 +255,9 @@ def register_crud(path: str, model, pk_column: str):
         except IntegrityError as e:
             db.rollback()
             return jsonify({"error": str(e.orig)}), 400
+        except ValueError as e:
+            db.rollback()
+            return jsonify({"error": str(e)}), 400
         finally:
             db.close()
 
@@ -205,7 +278,7 @@ def register_crud(path: str, model, pk_column: str):
             obj = db.get(model, pk)
             if not obj:
                 return jsonify({"error": f"{table} not found"}), 404
-            for k, v in data.items():
+            for k, v in coerce_payload(model, data).items():
                 if hasattr(obj, k):
                     setattr(obj, k, v)
             db.commit()
@@ -214,6 +287,9 @@ def register_crud(path: str, model, pk_column: str):
         except IntegrityError as e:
             db.rollback()
             return jsonify({"error": str(e.orig)}), 400
+        except ValueError as e:
+            db.rollback()
+            return jsonify({"error": str(e)}), 400
         finally:
             db.close()
 

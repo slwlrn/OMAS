@@ -32,7 +32,7 @@
     <main class="container py-4">
       <header class="mb-4 text-center">
         <h1 class="hero-title">OMAS - Gestión de Pacientes y Citas</h1>
-        <p class="text-muted">Interfaz ligera que consume la API Flask en <code>http://localhost:5000</code>.</p>
+        <p class="text-muted">Interfaz ligera que consume la API Flask servida por Waitress en el mismo host.</p>
       </header>
 
       <!-- Contenedor para mensajes de éxito / error -->
@@ -165,7 +165,7 @@
 
     <script>
       // URL base de la API Flask
-      const API_BASE = "http://localhost:5000";
+      const API_BASE = window.location.origin;
 
       // Elementos del DOM reutilizables
       const feedbackEl = document.getElementById("feedback");

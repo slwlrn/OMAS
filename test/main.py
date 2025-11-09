@@ -1,11 +1,12 @@
 # main.py
 import os
 from datetime import datetime, date, time
+from decimal import Decimal
 from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 from sqlalchemy import (
     create_engine, Column, BigInteger, Integer, String, Text, Date, DateTime, Time,
-    Enum, ForeignKey
+    Enum, ForeignKey, Boolean, Numeric, JSON
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +22,8 @@ Base = declarative_base()
 
 # ========= Util =========
 def serialize_value(v):
+    if isinstance(v, Decimal):
+        return float(v)
     if isinstance(v, datetime):
         return v.isoformat(sep=" ", timespec="seconds")
     if isinstance(v, date):
@@ -38,8 +41,8 @@ class Patient(Base):
     patient_id   = Column(BigInteger, primary_key=True, autoincrement=True)
     first_name   = Column(String(80), nullable=False)
     last_name    = Column(String(80), nullable=False)
-    email        = Column(String(120), unique=True, nullable=False)
-    phone        = Column(String(40))
+    email        = Column(String(190), unique=True, nullable=False)
+    phone        = Column(String(32))
     date_of_birth= Column(Date)
     created_at   = Column(DateTime, default=datetime.utcnow)
     updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -48,9 +51,9 @@ class Provider(Base):
     __tablename__ = "providers"
     provider_id  = Column(BigInteger, primary_key=True, autoincrement=True)
     display_name = Column(String(120), nullable=False)
-    name         = Column(String(120))
-    specialty    = Column(String(120))
-    phone        = Column(String(40))
+    specialty    = Column(String(120), nullable=False)
+    email        = Column(String(190), unique=True, nullable=False)
+    phone        = Column(String(32))
     timezone     = Column(String(64), default="UTC")
     created_at   = Column(DateTime, default=datetime.utcnow)
     updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -69,9 +72,11 @@ class ProviderException(Base):
     __tablename__ = "provider_exceptions"
     exception_id = Column(BigInteger, primary_key=True, autoincrement=True)
     provider_id  = Column(BigInteger, ForeignKey("providers.provider_id"), nullable=False)
-    start_time   = Column(DateTime, nullable=False)
-    end_time     = Column(DateTime, nullable=False)
-    reason       = Column(String(200))
+    start_at     = Column(DateTime, nullable=False)
+    end_at       = Column(DateTime, nullable=False)
+    reason       = Column(String(160))
+    is_blocking  = Column(Boolean, nullable=False, default=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
     provider     = relationship("Provider")
 
 class Appointment(Base):
@@ -93,13 +98,13 @@ class Payment(Base):
     __tablename__ = "payments"
     payment_id     = Column(BigInteger, primary_key=True, autoincrement=True)
     appointment_id = Column(BigInteger, ForeignKey("appointments.appointment_id"))
-    amount_cents   = Column(Integer, nullable=False, default=0)
+    amount         = Column(Numeric(10, 2), nullable=False)
     currency       = Column(String(3), nullable=False, default="MXN")
-    status         = Column(Enum("pending","paid","failed","refunded", name="payment_status"),
+    status         = Column(Enum("pending","paid","refunded","failed", name="payment_status"),
                             nullable=False, default="pending")
-    method         = Column(String(40))
-    provider_txn_id= Column(String(120))
+    provider_account = Column(String(120))
     created_at     = Column(DateTime, default=datetime.utcnow)
+    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     appointment    = relationship("Appointment")
 
 class NotificationPreference(Base):
@@ -108,30 +113,35 @@ class NotificationPreference(Base):
     user_type   = Column(Enum("patient","provider", name="user_type"), nullable=False)
     user_id     = Column(BigInteger, nullable=False)
     channel     = Column(Enum("email","sms","push", name="notify_channel"), nullable=False)
-    lead_minutes= Column(Integer, nullable=False, default=120)
+    lead_minutes= Column(Integer, nullable=False, default=1440)
+    enabled     = Column(Boolean, nullable=False, default=True)
 
 class NotificationOutbox(Base):
     __tablename__ = "notifications_outbox"
     notif_id     = Column(BigInteger, primary_key=True, autoincrement=True)
     appointment_id = Column(BigInteger, ForeignKey("appointments.appointment_id"))
-    target       = Column(String(255))
     channel      = Column(Enum("email","sms","push", name="outbox_channel"), nullable=False)
-    payload      = Column(Text)
-    status       = Column(Enum("pending","sent","failed", name="outbox_status"), default="pending")
+    template     = Column(String(80), nullable=False)
+    payload      = Column(JSON)
+    send_after   = Column(DateTime, nullable=False)
+    status       = Column(Enum("queued","sending","sent","failed", name="outbox_status"),
+                          nullable=False, default="queued")
     last_error   = Column(Text)
     created_at   = Column(DateTime, default=datetime.utcnow)
-    sent_at      = Column(DateTime)
+    updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     appointment  = relationship("Appointment")
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     audit_id   = Column(BigInteger, primary_key=True, autoincrement=True)
+    actor_type = Column(Enum("patient","provider","admin","system", name="actor_type"), nullable=False)
     actor_id   = Column(BigInteger)
-    action     = Column(String(120), nullable=False)
-    entity     = Column(String(80))
+    action     = Column(String(80), nullable=False)
+    entity_type= Column(String(80), nullable=False)
     entity_id  = Column(BigInteger)
-    ts         = Column(DateTime, default=datetime.utcnow)
-    details    = Column(Text)
+    ip         = Column(String(45))
+    metadata   = Column(JSON)
+    event_ts   = Column(DateTime, default=datetime.utcnow)
 
 # ========= Flask + CRUD genérico =========
 APP_DIR = Path(__file__).resolve().parent

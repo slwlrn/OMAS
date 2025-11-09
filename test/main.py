@@ -1,7 +1,8 @@
 # main.py
 import os
 from datetime import datetime, date, time
-from flask import Flask, jsonify, request
+from pathlib import Path
+from flask import Flask, jsonify, request, send_from_directory
 from sqlalchemy import (
     create_engine, Column, BigInteger, Integer, String, Text, Date, DateTime, Time,
     Enum, ForeignKey
@@ -133,6 +134,9 @@ class AuditLog(Base):
     details    = Column(Text)
 
 # ========= Flask + CRUD genérico =========
+APP_DIR = Path(__file__).resolve().parent
+FRONTEND_ENTRY = "frontend.html"
+
 app = Flask(__name__)
 
 RESOURCES = [
@@ -226,7 +230,13 @@ for path, model, pk in RESOURCES:
     register_crud(path, model, pk)
 
 @app.get("/")
-def root():
+def serve_frontend():
+    """Devuelve el frontend estático para que Waitress lo sirva junto al API."""
+    return send_from_directory(APP_DIR, FRONTEND_ENTRY)
+
+
+@app.get("/api")
+def api_root():
     return jsonify({
         "ok": True,
         "message": "OMAS Flask Monolith",

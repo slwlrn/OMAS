@@ -116,6 +116,23 @@
                   </select>
                 </div>
                 <div class="col-12">
+                  <div
+                    id="provider-availability-wrapper"
+                    class="border rounded-3 bg-light p-3 d-none"
+                  >
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                      <h3 class="h6 mb-0">Disponibilidad del proveedor</h3>
+                      <span
+                        id="provider-availability-provider-name"
+                        class="badge text-bg-secondary"
+                      ></span>
+                    </div>
+                    <div id="provider-availability-content" class="small text-muted">
+                      Selecciona un proveedor para consultar sus horarios disponibles.
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12">
                   <label class="form-label">Horario de la cita</label>
                   <div class="row g-2 align-items-end">
                     <div class="col-sm-6 col-lg-6">
@@ -196,7 +213,25 @@
       const appointmentStartInput = document.getElementById("appointment-start");
       const appointmentEndInput = document.getElementById("appointment-end");
       const appointmentTimeSummary = document.getElementById("appointment-time-summary");
+      const providerAvailabilityWrapper = document.getElementById(
+        "provider-availability-wrapper"
+      );
+      const providerAvailabilityProviderName = document.getElementById(
+        "provider-availability-provider-name"
+      );
+      const providerAvailabilityContent = document.getElementById(
+        "provider-availability-content"
+      );
       const DEFAULT_APPOINTMENT_DURATION_MINUTES = 30;
+      const WEEKDAY_NAMES = [
+        "Lunes",
+        "Martes",
+        "Miércoles",
+        "Jueves",
+        "Viernes",
+        "Sábado",
+        "Domingo",
+      ];
 
       /**
        * Muestra mensajes de estado globales en la página (éxito o error).
@@ -250,6 +285,212 @@
         }
 
         return null;
+      }
+
+      let providerAvailabilityRequestToken = 0;
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function parseDateTimeString(value) {
+        if (!value || typeof value !== "string") {
+          return null;
+        }
+        const normalized = value.replace(" ", "T");
+        let date = new Date(normalized);
+        if (Number.isNaN(date.getTime())) {
+          date = new Date(`${normalized}Z`);
+        }
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+
+      function formatTime(value) {
+        if (!value) {
+          return "";
+        }
+        return String(value).slice(0, 5);
+      }
+
+      function formatTimeRange(start, end) {
+        const startPart = formatTime(start);
+        const endPart = formatTime(end);
+        if (startPart && endPart) {
+          return `${startPart} - ${endPart}`;
+        }
+        return startPart || endPart || "Horario sin definir";
+      }
+
+      function formatDateTimeDisplay(value) {
+        const parsed = parseDateTimeString(value);
+        if (!parsed) {
+          return value || "";
+        }
+        return formatHumanReadable(parsed);
+      }
+
+      function getWeekdayName(index) {
+        if (!Number.isInteger(index)) {
+          return null;
+        }
+        if (index >= 1 && index <= 7) {
+          return WEEKDAY_NAMES[(index - 1) % WEEKDAY_NAMES.length];
+        }
+        if (index >= 0 && index < WEEKDAY_NAMES.length) {
+          return WEEKDAY_NAMES[index];
+        }
+        return null;
+      }
+
+      function renderWeeklyAvailability(weekly) {
+        if (!Array.isArray(weekly) || weekly.length === 0) {
+          return '<p class="mb-0 text-muted">Este proveedor no tiene disponibilidad semanal configurada.</p>';
+        }
+
+        const slotsByDay = new Map();
+        weekly.forEach((slot) => {
+          const weekdayIndex = Number(slot.weekday);
+          const dayNameFromIndex = Number.isNaN(weekdayIndex)
+            ? null
+            : getWeekdayName(weekdayIndex);
+          const dayName = dayNameFromIndex || `Día ${escapeHtml(slot.weekday)}`;
+          if (!slotsByDay.has(weekdayIndex)) {
+            slotsByDay.set(weekdayIndex, { dayName, slots: [] });
+          }
+          slotsByDay.get(weekdayIndex).slots.push(slot);
+        });
+
+        const sortedDays = Array.from(slotsByDay.entries()).sort((a, b) => {
+          const first = Number(a[0]);
+          const second = Number(b[0]);
+          if (Number.isNaN(first) && Number.isNaN(second)) {
+            return 0;
+          }
+          if (Number.isNaN(first)) {
+            return 1;
+          }
+          if (Number.isNaN(second)) {
+            return -1;
+          }
+          return first - second;
+        });
+
+        return sortedDays
+          .map(([, data]) => {
+            const items = data.slots
+              .slice()
+              .sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)))
+              .map((slot) => {
+                const location = slot.location
+                  ? `<span class="text-muted ms-2 flex-shrink-0">(${escapeHtml(slot.location)})</span>`
+                  : "";
+                return `<li class="list-group-item px-0 py-1 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                  <span>${escapeHtml(formatTimeRange(slot.start_time, slot.end_time))}</span>
+                  ${location}
+                </li>`;
+              })
+              .join("");
+            return `<div class="mb-3">
+              <h4 class="h6 text-primary mb-1">${escapeHtml(data.dayName)}</h4>
+              <ul class="list-group list-group-flush">
+                ${items}
+              </ul>
+            </div>`;
+          })
+          .join("");
+      }
+
+      function renderAvailabilityExceptions(exceptions) {
+        if (!Array.isArray(exceptions)) {
+          return "";
+        }
+        const blocking = exceptions.filter((exception) => exception.is_blocking !== false);
+        if (!blocking.length) {
+          return "";
+        }
+
+        const items = blocking
+          .slice()
+          .sort((a, b) => String(a.start_at).localeCompare(String(b.start_at)))
+          .map((exception) => {
+            const startText = formatDateTimeDisplay(exception.start_at);
+            const endText = formatDateTimeDisplay(exception.end_at);
+            const reason = exception.reason
+              ? ` <span class="text-muted">— ${escapeHtml(exception.reason)}</span>`
+              : "";
+            return `<li class="list-group-item px-0 py-1">
+              <div>${escapeHtml(startText)}<span class="text-muted"> &rarr; </span>${escapeHtml(endText)}</div>
+              ${reason}
+            </li>`;
+          })
+          .join("");
+
+        return `<div class="mt-3">
+          <h4 class="h6 text-danger mb-1">Bloqueos programados</h4>
+          <ul class="list-group list-group-flush">
+            ${items}
+          </ul>
+        </div>`;
+      }
+
+      function resetProviderAvailabilityDisplay() {
+        providerAvailabilityWrapper.classList.add("d-none");
+        providerAvailabilityProviderName.textContent = "";
+        providerAvailabilityContent.innerHTML =
+          '<span class="text-muted">Selecciona un proveedor para consultar sus horarios disponibles.</span>';
+      }
+
+      function showProviderAvailabilityLoading() {
+        providerAvailabilityWrapper.classList.remove("d-none");
+        providerAvailabilityProviderName.textContent = "Cargando...";
+        providerAvailabilityContent.innerHTML =
+          '<div class="text-muted small">Obteniendo disponibilidad...</div>';
+      }
+
+      async function loadProviderAvailability(providerId) {
+        if (!providerId) {
+          resetProviderAvailabilityDisplay();
+          return;
+        }
+
+        providerAvailabilityRequestToken += 1;
+        const requestId = providerAvailabilityRequestToken;
+        showProviderAvailabilityLoading();
+
+        try {
+          const response = await fetch(`${API_BASE}/providers/${providerId}/availability`);
+          const data = await handleResponse(response);
+
+          if (requestId !== providerAvailabilityRequestToken) {
+            return;
+          }
+
+          providerAvailabilityWrapper.classList.remove("d-none");
+          const providerName =
+            data?.provider?.display_name || data?.provider?.name || `Proveedor ${providerId}`;
+          providerAvailabilityProviderName.textContent = providerName;
+
+          const weeklyHtml = renderWeeklyAvailability(data?.weekly);
+          const exceptionsHtml = renderAvailabilityExceptions(data?.exceptions);
+          const sections = [weeklyHtml, exceptionsHtml].filter(Boolean);
+          providerAvailabilityContent.innerHTML =
+            sections.join('<hr class="my-2" />') ||
+            '<p class="mb-0 text-muted">Este proveedor no tiene disponibilidad configurada.</p>';
+        } catch (error) {
+          if (requestId !== providerAvailabilityRequestToken) {
+            return;
+          }
+          console.error("Error cargando disponibilidad", error);
+          providerAvailabilityWrapper.classList.remove("d-none");
+          providerAvailabilityProviderName.textContent = "";
+          providerAvailabilityContent.innerHTML =
+            '<p class="mb-0 text-danger">No se pudo cargar la disponibilidad del proveedor seleccionado.</p>';
+        }
       }
 
       // ========== Gestión de pacientes ==========
@@ -342,18 +583,31 @@
       // ========== Gestión de proveedores ==========
       async function loadProviders() {
         try {
+          const previousProviderId = appointmentProviderSelect.value;
           const response = await fetch(`${API_BASE}/providers`);
           const providers = await handleResponse(response);
 
           appointmentProviderSelect.innerHTML = '<option value="" disabled selected>Selecciona un proveedor</option>';
+          let hasPreviousProvider = false;
           providers.forEach((provider) => {
             const option = document.createElement("option");
             option.value = provider.provider_id;
             option.textContent = `${provider.provider_id} - ${provider.display_name || provider.name || "Proveedor"}`;
             appointmentProviderSelect.appendChild(option);
+            if (String(provider.provider_id) === String(previousProviderId)) {
+              hasPreviousProvider = true;
+            }
           });
+
+          if (hasPreviousProvider && previousProviderId) {
+            appointmentProviderSelect.value = previousProviderId;
+            loadProviderAvailability(previousProviderId);
+          } else {
+            resetProviderAvailabilityDisplay();
+          }
         } catch (error) {
           console.error("Error cargando proveedores", error);
+          resetProviderAvailabilityDisplay();
         }
       }
 
@@ -557,9 +811,19 @@
         appointmentForm.addEventListener("reset", () => {
           updateAppointmentHiddenFields();
           resetAppointmentFieldValidity();
+          resetProviderAvailabilityDisplay();
         });
         document.getElementById("refresh-patients").addEventListener("click", loadPatients);
         document.getElementById("refresh-appointments").addEventListener("click", loadAppointments);
+
+        appointmentProviderSelect.addEventListener("change", (event) => {
+          const providerId = event.target.value;
+          if (!providerId) {
+            resetProviderAvailabilityDisplay();
+            return;
+          }
+          loadProviderAvailability(providerId);
+        });
 
         // Delegación de eventos para eliminar pacientes desde la tabla
         patientsTableBody.addEventListener("click", (event) => {

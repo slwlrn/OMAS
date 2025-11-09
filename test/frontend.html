@@ -115,13 +115,29 @@
                     <option value="" selected disabled>Selecciona un proveedor</option>
                   </select>
                 </div>
-                <div class="col-md-6">
-                  <label for="appointment-start" class="form-label">Inicio</label>
-                  <input type="datetime-local" id="appointment-start" class="form-control" required />
-                </div>
-                <div class="col-md-6">
-                  <label for="appointment-end" class="form-label">Fin</label>
-                  <input type="datetime-local" id="appointment-end" class="form-control" required />
+                <div class="col-12">
+                  <label class="form-label">Horario de la cita</label>
+                  <div class="row g-2 align-items-end">
+                    <div class="col-sm-6 col-lg-6">
+                      <label for="appointment-date" class="form-label small text-muted">Fecha</label>
+                      <input type="date" id="appointment-date" class="form-control" required />
+                    </div>
+                    <div class="col-sm-6 col-lg-6">
+                      <label for="appointment-start-time" class="form-label small text-muted">Hora de inicio</label>
+                      <input
+                        type="time"
+                        id="appointment-start-time"
+                        class="form-control"
+                        step="1800"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <p class="form-text mb-0" id="appointment-time-summary">
+                    Selecciona fecha y hora para reservar una cita de 30 minutos.
+                  </p>
+                  <input type="hidden" id="appointment-start" required />
+                  <input type="hidden" id="appointment-end" required />
                 </div>
                 <div class="col-12 d-grid">
                   <button type="submit" class="btn btn-secondary">Crear cita</button>
@@ -171,10 +187,15 @@
       const feedbackEl = document.getElementById("feedback");
       const patientsTableBody = document.querySelector("#patients-table tbody");
       const appointmentsTableBody = document.querySelector("#appointments-table tbody");
+      const appointmentForm = document.getElementById("appointment-form");
       const appointmentPatientSelect = document.getElementById("appointment-patient");
       const appointmentProviderSelect = document.getElementById("appointment-provider");
+      const appointmentDateInput = document.getElementById("appointment-date");
+      const appointmentStartTimeInput = document.getElementById("appointment-start-time");
       const appointmentStartInput = document.getElementById("appointment-start");
       const appointmentEndInput = document.getElementById("appointment-end");
+      const appointmentTimeSummary = document.getElementById("appointment-time-summary");
+      const DEFAULT_APPOINTMENT_DURATION_MINUTES = 30;
 
       /**
        * Muestra mensajes de estado globales en la página (éxito o error).
@@ -343,12 +364,65 @@
         }
       }
 
+      function formatDateTimeLocal(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        const hours = String(date.getHours()).padStart(2, "0");
+        const minutes = String(date.getMinutes()).padStart(2, "0");
+        return `${year}-${month}-${day}T${hours}:${minutes}`;
+      }
+
+      function formatHumanReadable(date) {
+        return date.toLocaleString("es-ES", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        });
+      }
+
+      function updateAppointmentHiddenFields() {
+        const dateValue = appointmentDateInput.value;
+        const startTimeValue = appointmentStartTimeInput.value;
+        const durationValue = DEFAULT_APPOINTMENT_DURATION_MINUTES;
+
+        appointmentStartInput.value = "";
+        appointmentEndInput.value = "";
+
+        if (!appointmentTimeSummary) {
+          return;
+        }
+
+        if (!dateValue || !startTimeValue) {
+          appointmentTimeSummary.textContent =
+            "Selecciona fecha y hora para reservar una cita de 30 minutos.";
+          return;
+        }
+
+        const startDate = new Date(`${dateValue}T${startTimeValue}`);
+        if (Number.isNaN(startDate.getTime())) {
+          appointmentTimeSummary.textContent =
+            "La combinación seleccionada no es válida. Revisa la fecha y hora.";
+          return;
+        }
+
+        const endDate = new Date(startDate.getTime() + durationValue * 60 * 1000);
+
+        appointmentStartInput.value = `${dateValue}T${startTimeValue}`;
+        appointmentEndInput.value = formatDateTimeLocal(endDate);
+        [appointmentDateInput, appointmentStartTimeInput].forEach((field) =>
+          field.classList.remove("is-invalid")
+        );
+        appointmentTimeSummary.textContent = `Cita desde ${formatHumanReadable(
+          startDate
+        )} hasta ${formatHumanReadable(endDate)} (30 minutos).`;
+      }
+
       function resetAppointmentFieldValidity() {
         [
           appointmentPatientSelect,
           appointmentProviderSelect,
-          appointmentStartInput,
-          appointmentEndInput,
+          appointmentDateInput,
+          appointmentStartTimeInput,
         ].forEach((field) => field.classList.remove("is-invalid"));
       }
 
@@ -365,14 +439,23 @@
 
         const patientId = appointmentPatientSelect.value;
         const providerId = appointmentProviderSelect.value;
+        const dateValue = appointmentDateInput.value;
+        const startTimeValue = appointmentStartTimeInput.value;
+
+        updateAppointmentHiddenFields();
+
         const startAt = appointmentStartInput.value;
         const endAt = appointmentEndInput.value;
 
         const missingFields = [
           { element: appointmentPatientSelect, label: "Paciente", value: patientId },
           { element: appointmentProviderSelect, label: "Proveedor", value: providerId },
-          { element: appointmentStartInput, label: "Inicio", value: startAt },
-          { element: appointmentEndInput, label: "Fin", value: endAt },
+          { element: appointmentDateInput, label: "Fecha", value: dateValue },
+          {
+            element: appointmentStartTimeInput,
+            label: "Hora de inicio",
+            value: startTimeValue,
+          },
         ].filter((field) => !field.value);
 
         if (missingFields.length) {
@@ -381,6 +464,17 @@
           const message = `Completa los siguientes campos: ${missingLabels}`;
           showFeedback(message, "warning");
           alert(message);
+          return;
+        }
+
+        if (!startAt || !endAt) {
+          const message =
+            "Selecciona una combinación válida de fecha y hora para la cita.";
+          showFeedback(message, "warning");
+          alert(message);
+          [appointmentDateInput, appointmentStartTimeInput].forEach((field) =>
+            field.classList.add("is-invalid")
+          );
           return;
         }
 
@@ -398,7 +492,9 @@
 
           await handleResponse(response);
           showFeedback("Cita creada correctamente", "success");
-          document.getElementById("appointment-form").reset();
+          appointmentForm.reset();
+          updateAppointmentHiddenFields();
+          resetAppointmentFieldValidity();
           await loadAppointments();
         } catch (error) {
           console.error("Error creando cita", error);
@@ -412,7 +508,11 @@
         loadAppointments();
 
         document.getElementById("patient-form").addEventListener("submit", createPatient);
-        document.getElementById("appointment-form").addEventListener("submit", createAppointment);
+        appointmentForm.addEventListener("submit", createAppointment);
+        appointmentForm.addEventListener("reset", () => {
+          updateAppointmentHiddenFields();
+          resetAppointmentFieldValidity();
+        });
         document.getElementById("refresh-patients").addEventListener("click", loadPatients);
         document.getElementById("refresh-appointments").addEventListener("click", loadAppointments);
 
@@ -423,6 +523,13 @@
           const patientId = button.getAttribute("data-id");
           deletePatient(patientId);
         });
+
+        [appointmentDateInput, appointmentStartTimeInput].forEach((field) => {
+          field.addEventListener("change", updateAppointmentHiddenFields);
+          field.addEventListener("input", updateAppointmentHiddenFields);
+        });
+
+        updateAppointmentHiddenFields();
       });
     </script>
   </body>

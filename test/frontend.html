@@ -111,9 +111,20 @@
                 </div>
                 <div class="col-md-6">
                   <label for="appointment-provider" class="form-label">Proveedor</label>
-                  <select id="appointment-provider" class="form-select" required>
-                    <option value="" selected disabled>Selecciona un proveedor</option>
-                  </select>
+                  <div class="input-group">
+                    <select id="appointment-provider" class="form-select" required>
+                      <option value="" selected disabled>Selecciona un proveedor</option>
+                    </select>
+                    <button
+                      type="button"
+                      id="clear-provider-selection"
+                      class="btn btn-outline-secondary"
+                      title="Deseleccionar proveedor"
+                      disabled
+                    >
+                      Deseleccionar
+                    </button>
+                  </div>
                 </div>
                 <div class="col-12">
                   <div
@@ -208,6 +219,9 @@
       const appointmentForm = document.getElementById("appointment-form");
       const appointmentPatientSelect = document.getElementById("appointment-patient");
       const appointmentProviderSelect = document.getElementById("appointment-provider");
+      const clearProviderSelectionButton = document.getElementById(
+        "clear-provider-selection"
+      );
       const appointmentDateInput = document.getElementById("appointment-date");
       const appointmentStartTimeInput = document.getElementById("appointment-start-time");
       const appointmentStartInput = document.getElementById("appointment-start");
@@ -537,11 +551,18 @@
         </div>`;
       }
 
+      function updateProviderSelectionState() {
+        if (clearProviderSelectionButton) {
+          clearProviderSelectionButton.disabled = !appointmentProviderSelect.value;
+        }
+      }
+
       function resetProviderAvailabilityDisplay() {
         providerAvailabilityWrapper.classList.add("d-none");
         providerAvailabilityProviderName.textContent = "";
         providerAvailabilityContent.innerHTML =
           '<span class="text-muted">Selecciona un proveedor para consultar sus horarios disponibles.</span>';
+        updateProviderSelectionState();
       }
 
       function showProviderAvailabilityLoading() {
@@ -706,6 +727,7 @@
           } else {
             resetProviderAvailabilityDisplay();
           }
+          updateProviderSelectionState();
         } catch (error) {
           console.error("Error cargando proveedores", error);
           resetProviderAvailabilityDisplay();
@@ -919,12 +941,23 @@
 
         appointmentProviderSelect.addEventListener("change", (event) => {
           const providerId = event.target.value;
+          updateProviderSelectionState();
           if (!providerId) {
             resetProviderAvailabilityDisplay();
             return;
           }
           loadProviderAvailability(providerId);
         });
+
+        if (clearProviderSelectionButton) {
+          clearProviderSelectionButton.addEventListener("click", () => {
+            appointmentProviderSelect.selectedIndex = 0;
+            appointmentProviderSelect.classList.remove("is-invalid");
+            appointmentProviderSelect.dispatchEvent(
+              new Event("change", { bubbles: true })
+            );
+          });
+        }
 
         // Delegación de eventos para eliminar pacientes desde la tabla
         patientsTableBody.addEventListener("click", (event) => {
@@ -947,6 +980,7 @@
         });
 
         updateAppointmentHiddenFields();
+        updateProviderSelectionState();
       });
     </script>
   </body>

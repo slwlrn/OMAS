@@ -348,13 +348,30 @@ def register_crud(path: str, model, pk_column: str):
             if not obj:
                 return jsonify({"error": f"{table} not found"}), 404
             if model is Patient:
-                has_booked = db.query(Appointment).filter(
-                    Appointment.patient_id == pk,
-                    Appointment.status == "booked"
-                ).first()
-                if has_booked:
+                has_active = (
+                    db.query(Appointment)
+                    .filter(
+                        Appointment.patient_id == pk,
+                        Appointment.status.in_(["booked", "rescheduled"]),
+                    )
+                    .first()
+                )
+                if has_active:
                     db.rollback()
-                    return jsonify({"error": "No se puede eliminar el paciente porque tiene una cita activa."}), 400
+                    return (
+                        jsonify({"error": "No se puede eliminar el paciente porque tiene una cita activa."}),
+                        400,
+                    )
+
+                (
+                    db.query(Appointment)
+                    .filter(
+                        Appointment.patient_id == pk,
+                        Appointment.status == "canceled",
+                    )
+                    .delete(synchronize_session=False)
+                )
+
             db.delete(obj)
             db.commit()
             return "", 204

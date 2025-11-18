@@ -1,4 +1,5 @@
 # main.py
+import logging
 import os
 import secrets
 from datetime import datetime, date, time, timezone, timedelta
@@ -25,6 +26,8 @@ SESSION_DURATION_MINUTES = int(os.getenv("SESSION_DURATION_MINUTES", "60"))
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 Base = declarative_base()
+
+logger = logging.getLogger(__name__)
 
 
 # ========= Sesiones ligeras =========
@@ -486,6 +489,11 @@ def auth_login():
     if not email or not pin:
         return jsonify({"error": "Debes indicar email y NIP."}), 400
     if pin != DEMO_LOGIN_PIN:
+        logger.warning(
+            "Intento de inicio de sesión con NIP inválido | tipo=%s | email=%s",
+            user_type or "<desconocido>",
+            email or "<desconocido>",
+        )
         return jsonify({"error": "El NIP ingresado no es válido."}), 401
 
     model = Patient if user_type == "patient" else Provider

@@ -704,6 +704,12 @@ def serve_frontend():
     return send_from_directory(APP_DIR, FRONTEND_ENTRY)
 
 
+@app.get("/frontend.js")
+def serve_frontend_bundle():
+    """Expone el bundle JS principal que consume la API desde el mismo host."""
+    return send_from_directory(APP_DIR, "frontend.js")
+
+
 @app.get("/api")
 def api_root():
     return jsonify({

@@ -588,28 +588,21 @@ def provider_availability(provider_id):
         )
 
         def to_weekday_candidates(value):
-            candidates = []
+            """Return the Python weekday index (0=Monday) for the stored value."""
             try:
                 weekday_value = int(value)
             except (TypeError, ValueError):
-                return candidates
+                return []
+
+            # UI almacena 1-7 (lunes-domingo). Normalizamos a 0-6 para
+            # compararlo con datetime.weekday(). Si ya está en 0-6 lo usamos tal cual.
+            if 1 <= weekday_value <= 7:
+                weekday_value = (weekday_value - 1) % 7
 
             if 0 <= weekday_value <= 6:
-                candidates.append(weekday_value)
-            if 1 <= weekday_value <= 7:
-                candidates.append((weekday_value - 1) % 7)
-            if weekday_value == 0:
-                candidates.append(6)
-            if weekday_value == 7:
-                candidates.append(6)
-            # deduplicate preserving order
-            seen = set()
-            result = []
-            for item in candidates:
-                if item not in seen:
-                    seen.add(item)
-                    result.append(item)
-            return result
+                return [weekday_value]
+
+            return []
 
         def overlaps(start_a, end_a, start_b, end_b):
             return start_a < end_b and end_a > start_b

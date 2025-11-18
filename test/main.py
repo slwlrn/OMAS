@@ -484,7 +484,7 @@ def auth_login():
     if user_type not in {"patient", "provider"}:
         return jsonify({"error": "El tipo de usuario debe ser 'patient' o 'provider'."}), 400
     if not email or not pin:
-        return jsonify({"error": "Debes indicar email y NIP de demostración."}), 400
+        return jsonify({"error": "Debes indicar email y NIP."}), 400
     if pin != DEMO_LOGIN_PIN:
         return jsonify({"error": "El NIP ingresado no es válido."}), 401
 

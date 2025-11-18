@@ -1,5 +1,6 @@
 // URL base de la API Flask
 const API_BASE = window.location.origin;
+const SESSION_STORAGE_KEY = "omas-demo-session";
 
 // Elementos del DOM reutilizables
 const feedbackEl = document.getElementById("feedback");
@@ -25,6 +26,24 @@ const providerAvailabilityProviderName = document.getElementById(
 const providerAvailabilityContent = document.getElementById(
   "provider-availability-content"
 );
+const loginForm = document.getElementById("login-form");
+const loginRoleSelect = document.getElementById("login-role");
+const loginEmailInput = document.getElementById("login-email");
+const loginPinInput = document.getElementById("login-pin");
+const sessionSummary = document.getElementById("session-summary");
+const logoutButton = document.getElementById("logout-button");
+const patientAuthPill = document.getElementById("patient-auth-pill");
+const appointmentAuthPill = document.getElementById("appointment-auth-pill");
+const availabilityAuthPill = document.getElementById("availability-auth-pill");
+const availabilityForm = document.getElementById("availability-form");
+const availabilityProviderSelect = document.getElementById("availability-provider");
+const availabilityWeekdaySelect = document.getElementById("availability-weekday");
+const availabilityStartInput = document.getElementById("availability-start");
+const availabilityEndInput = document.getElementById("availability-end");
+const availabilityLocationInput = document.getElementById("availability-location");
+const availabilityTableBody = document.querySelector("#availability-table tbody");
+const availabilityEmptyState = document.getElementById("availability-empty-state");
+const refreshAvailabilityButton = document.getElementById("refresh-availability");
 const DEFAULT_APPOINTMENT_DURATION_MINUTES = 30;
 const WEEKDAY_NAMES = [
   "Lunes",
@@ -35,6 +54,18 @@ const WEEKDAY_NAMES = [
   "Sábado",
   "Domingo",
 ];
+let sessionToken = null;
+let activeSession = null;
+let patientsCache = [];
+let providersCache = [];
+let availabilityCache = [];
+const STATUS_BADGE_CLASS = {
+  booked: "primary",
+  rescheduled: "info",
+  canceled: "secondary",
+  completed: "success",
+  no_show: "warning",
+};
 
 /**
  * Muestra mensajes de estado globales en la página (éxito o error).
@@ -70,6 +101,10 @@ async function handleResponse(response) {
       }
     }
 
+    if (response.status === 401) {
+      clearSessionState();
+    }
+
     showFeedback(message, "danger");
     alert(message);
     throw new Error(message);
@@ -88,6 +123,179 @@ async function handleResponse(response) {
   }
 
   return null;
+}
+
+function persistSession() {
+  if (sessionToken && activeSession) {
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({ token: sessionToken, user: activeSession })
+    );
+  } else {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  }
+}
+
+function clearSessionState() {
+  sessionToken = null;
+  activeSession = null;
+  persistSession();
+  applySessionState();
+}
+
+function setSessionState(token, user) {
+  sessionToken = token;
+  activeSession = user || null;
+  persistSession();
+  applySessionState();
+}
+
+function updateAuthPill(pill, isActive) {
+  if (!pill) {
+    return;
+  }
+  pill.classList.remove("text-bg-success", "text-bg-warning");
+  if (isActive) {
+    pill.textContent = "Sesión validada";
+    pill.classList.add("text-bg-success");
+  } else {
+    pill.textContent = "Requiere sesión activa";
+    pill.classList.add("text-bg-warning");
+  }
+}
+
+function applySessionState() {
+  const hasSession = Boolean(sessionToken && activeSession);
+  if (sessionSummary) {
+    if (hasSession) {
+      const expiresText = activeSession.expires_at
+        ? ` · expira ${formatDateTimeDisplay(activeSession.expires_at)}`
+        : "";
+      sessionSummary.textContent = `Sesión activa como ${
+        activeSession.display_name || "usuario"
+      } (${activeSession.user_type})${expiresText}`;
+      sessionSummary.classList.remove("text-muted");
+    } else {
+      sessionSummary.textContent =
+        "Inicia sesión para habilitar la captura de pacientes, disponibilidad y citas.";
+      sessionSummary.classList.add("text-muted");
+    }
+  }
+  if (logoutButton) {
+    logoutButton.disabled = !hasSession;
+  }
+  updateAuthPill(patientAuthPill, hasSession);
+  updateAuthPill(appointmentAuthPill, hasSession);
+  updateAuthPill(availabilityAuthPill, hasSession);
+  document.body.classList.toggle("session-active", hasSession);
+}
+
+function ensureAuthenticated() {
+  if (sessionToken && activeSession) {
+    return true;
+  }
+  const message = "Inicia sesión para completar esta acción.";
+  showFeedback(message, "warning");
+  alert(message);
+  return false;
+}
+
+function withAuthHeaders(options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (sessionToken) {
+    headers["X-Session-Token"] = sessionToken;
+  }
+  return { ...options, headers };
+}
+
+function restoreSessionFromStorage() {
+  const stored = localStorage.getItem(SESSION_STORAGE_KEY);
+  if (!stored) {
+    applySessionState();
+    return;
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    sessionToken = (parsed && parsed.token) || null;
+    activeSession = (parsed && parsed.user) || null;
+  } catch (error) {
+    sessionToken = null;
+    activeSession = null;
+  }
+  applySessionState();
+}
+
+async function validateStoredSession() {
+  if (!sessionToken) {
+    return;
+  }
+  try {
+    const response = await fetch(`${API_BASE}/auth/session`, {
+      headers: { "X-Session-Token": sessionToken },
+    });
+    const data = await handleResponse(response);
+    if (data && data.user) {
+      setSessionState(sessionToken, data.user);
+    }
+  } catch (error) {
+    clearSessionState();
+  }
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  const userType = loginRoleSelect.value;
+  const email = loginEmailInput.value.trim();
+  const pin = loginPinInput.value.trim();
+
+  if (!userType || !email || !pin) {
+    const message = "Completa tipo de usuario, correo y NIP de demostración.";
+    showFeedback(message, "warning");
+    alert(message);
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_type: userType, email, pin }),
+    });
+    const data = await handleResponse(response);
+    setSessionState(data.token, data.user);
+    showFeedback(`Sesión iniciada como ${data.user.display_name}`, "success");
+    loginPinInput.value = "";
+    await Promise.all([
+      loadPatients(),
+      loadProviders(),
+      refreshAvailabilityData(),
+      loadAppointments(),
+    ]);
+  } catch (error) {
+    console.error("Error iniciando sesión", error);
+  }
+}
+
+async function handleLogout() {
+  if (!sessionToken) {
+    return;
+  }
+  try {
+    const response = await fetch(
+      `${API_BASE}/auth/logout`,
+      withAuthHeaders({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: sessionToken }),
+      })
+    );
+    await handleResponse(response);
+  } catch (error) {
+    console.error("Error cerrando sesión", error);
+  } finally {
+    clearSessionState();
+    showFeedback("Sesión cerrada", "info");
+  }
 }
 
 let providerAvailabilityRequestToken = 0;
@@ -340,6 +548,26 @@ function renderAvailabilityExceptions(exceptions) {
   </div>`;
 }
 
+function getPatientLabel(patientId) {
+  const match = patientsCache.find(
+    (patient) => String(patient.patient_id) === String(patientId)
+  );
+  if (!match) {
+    return `Paciente ${patientId}`;
+  }
+  return `${match.first_name} ${match.last_name}`;
+}
+
+function getProviderLabel(providerId) {
+  const match = providersCache.find(
+    (provider) => String(provider.provider_id) === String(providerId)
+  );
+  if (!match) {
+    return `Proveedor ${providerId}`;
+  }
+  return match.display_name || match.name || `Proveedor ${providerId}`;
+}
+
 function updateProviderSelectionState() {
   if (clearProviderSelectionButton) {
     clearProviderSelectionButton.disabled = !appointmentProviderSelect.value;
@@ -380,14 +608,23 @@ async function loadProviderAvailability(providerId) {
     }
 
     providerAvailabilityWrapper.classList.remove("d-none");
+    const providerData = data && data.provider ? data.provider : null;
     const providerName =
-      data?.provider?.display_name || data?.provider?.name || `Proveedor ${providerId}`;
+      (providerData && (providerData.display_name || providerData.name)) ||
+      `Proveedor ${providerId}`;
     providerAvailabilityProviderName.textContent = providerName;
 
-    const timezone = data?.timezone || data?.provider?.timezone;
-    const upcomingHtml = renderUpcomingSlots(data?.upcoming_slots, timezone);
-    const weeklyHtml = renderWeeklyAvailability(data?.weekly);
-    const exceptionsHtml = renderAvailabilityExceptions(data?.exceptions);
+    const timezone = data && data.timezone ? data.timezone : providerData && providerData.timezone;
+    const upcomingHtml = renderUpcomingSlots(
+      data && Array.isArray(data.upcoming_slots) ? data.upcoming_slots : null,
+      timezone
+    );
+    const weeklyHtml = renderWeeklyAvailability(
+      data && Array.isArray(data.weekly) ? data.weekly : null
+    );
+    const exceptionsHtml = renderAvailabilityExceptions(
+      data && Array.isArray(data.exceptions) ? data.exceptions : null
+    );
     const sections = [upcomingHtml, weeklyHtml, exceptionsHtml].filter(Boolean);
     providerAvailabilityContent.innerHTML =
       sections.join('<hr class="my-2" />') ||
@@ -411,10 +648,12 @@ async function loadPatients() {
     const patients = await handleResponse(response);
 
     // Limpiar tabla y selectores
+    patientsCache = Array.isArray(patients) ? patients : [];
     patientsTableBody.innerHTML = "";
-    appointmentPatientSelect.innerHTML = '<option value="" disabled selected>Selecciona un paciente</option>';
+    appointmentPatientSelect.innerHTML =
+      '<option value="" disabled selected>Selecciona un paciente</option>';
 
-    patients.forEach((patient) => {
+    patientsCache.forEach((patient) => {
       const row = document.createElement("tr");
       row.innerHTML = `
         <td>${patient.patient_id}</td>
@@ -434,6 +673,10 @@ async function loadPatients() {
       option.textContent = `${patient.patient_id} - ${patient.first_name} ${patient.last_name}`;
       appointmentPatientSelect.appendChild(option);
     });
+
+    if (activeSession && activeSession.user_type === "patient") {
+      appointmentPatientSelect.value = String(activeSession.user_id || "");
+    }
   } catch (error) {
     console.error("Error cargando pacientes", error);
   }
@@ -441,6 +684,9 @@ async function loadPatients() {
 
 async function createPatient(event) {
   event.preventDefault();
+  if (!ensureAuthenticated()) {
+    return;
+  }
 
   const firstName = document.getElementById("patient-first-name").value.trim();
   const lastName = document.getElementById("patient-last-name").value.trim();
@@ -453,15 +699,18 @@ async function createPatient(event) {
   }
 
   try {
-    const response = await fetch(`${API_BASE}/patients`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        first_name: firstName,
-        last_name: lastName,
-        email,
-      }),
-    });
+    const response = await fetch(
+      `${API_BASE}/patients`,
+      withAuthHeaders({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          first_name: firstName,
+          last_name: lastName,
+          email,
+        }),
+      })
+    );
 
     await handleResponse(response);
     showFeedback("Paciente creado correctamente", "success");
@@ -473,14 +722,18 @@ async function createPatient(event) {
 }
 
 async function deletePatient(patientId) {
+  if (!ensureAuthenticated()) {
+    return;
+  }
   if (!confirm("¿Eliminar paciente? Esta acción no se puede deshacer.")) {
     return;
   }
 
   try {
-    const response = await fetch(`${API_BASE}/patients/${patientId}`, {
-      method: "DELETE",
-    });
+    const response = await fetch(
+      `${API_BASE}/patients/${patientId}`,
+      withAuthHeaders({ method: "DELETE" })
+    );
 
     await handleResponse(response);
     showFeedback("Paciente eliminado", "info");
@@ -492,34 +745,223 @@ async function deletePatient(patientId) {
 }
 
 // ========== Gestión de proveedores ==========
+function populateProviderSelect(selectElement, providers, placeholderText) {
+  if (!selectElement) {
+    return;
+  }
+  const previousValue = selectElement.value;
+  selectElement.innerHTML = `<option value="" disabled selected>${placeholderText}</option>`;
+  let hasPreviousValue = false;
+  providers.forEach((provider) => {
+    const option = document.createElement("option");
+    option.value = provider.provider_id;
+    option.textContent = `${provider.provider_id} - ${
+      provider.display_name || provider.name || "Proveedor"
+    }`;
+    selectElement.appendChild(option);
+    if (String(provider.provider_id) === String(previousValue)) {
+      hasPreviousValue = true;
+    }
+  });
+  if (hasPreviousValue && previousValue) {
+    selectElement.value = previousValue;
+  }
+}
+
 async function loadProviders() {
   try {
-    const previousProviderId = appointmentProviderSelect.value;
     const response = await fetch(`${API_BASE}/providers`);
     const providers = await handleResponse(response);
+    providersCache = Array.isArray(providers) ? providers : [];
 
-    appointmentProviderSelect.innerHTML = '<option value="" disabled selected>Selecciona un proveedor</option>';
-    let hasPreviousProvider = false;
-    providers.forEach((provider) => {
-      const option = document.createElement("option");
-      option.value = provider.provider_id;
-      option.textContent = `${provider.provider_id} - ${provider.display_name || provider.name || "Proveedor"}`;
-      appointmentProviderSelect.appendChild(option);
-      if (String(provider.provider_id) === String(previousProviderId)) {
-        hasPreviousProvider = true;
-      }
-    });
+    populateProviderSelect(
+      appointmentProviderSelect,
+      providersCache,
+      "Selecciona un proveedor"
+    );
+    populateProviderSelect(
+      availabilityProviderSelect,
+      providersCache,
+      "Proveedor para administrar horarios"
+    );
 
-    if (hasPreviousProvider && previousProviderId) {
-      appointmentProviderSelect.value = previousProviderId;
-      loadProviderAvailability(previousProviderId);
+    let providerForPreview = appointmentProviderSelect.value;
+    if (activeSession && activeSession.user_type === "provider" && activeSession.user_id) {
+      const providerId = String(activeSession.user_id);
+      appointmentProviderSelect.value = providerId;
+      availabilityProviderSelect.value = providerId;
+      providerForPreview = providerId;
+    }
+
+    if (providerForPreview) {
+      loadProviderAvailability(providerForPreview);
     } else {
       resetProviderAvailabilityDisplay();
     }
     updateProviderSelectionState();
+    renderAvailabilityTable();
   } catch (error) {
     console.error("Error cargando proveedores", error);
     resetProviderAvailabilityDisplay();
+  }
+}
+
+async function refreshAvailabilityData() {
+  try {
+    const response = await fetch(`${API_BASE}/provider-availability`);
+    const data = await handleResponse(response);
+    availabilityCache = Array.isArray(data) ? data : [];
+    renderAvailabilityTable();
+  } catch (error) {
+    console.error("Error cargando disponibilidad semanal", error);
+  }
+}
+
+function renderAvailabilityTable() {
+  if (!availabilityTableBody) {
+    return;
+  }
+  const providerId = availabilityProviderSelect ? availabilityProviderSelect.value : "";
+  availabilityTableBody.innerHTML = "";
+  if (!providerId) {
+    if (availabilityEmptyState) {
+      availabilityEmptyState.classList.remove("d-none");
+      availabilityEmptyState.textContent =
+        "Selecciona un proveedor para consultar su disponibilidad fija.";
+    }
+    return;
+  }
+  const slots = availabilityCache
+    .filter((slot) => String(slot.provider_id) === String(providerId))
+    .sort((a, b) => {
+      const weekdayDiff = Number(a.weekday) - Number(b.weekday);
+      if (weekdayDiff !== 0) {
+        return weekdayDiff;
+      }
+      return String(a.start_time).localeCompare(String(b.start_time));
+    });
+
+  if (!slots.length) {
+    if (availabilityEmptyState) {
+      availabilityEmptyState.classList.remove("d-none");
+      availabilityEmptyState.textContent =
+        "El proveedor aún no tiene horarios registrados.";
+    }
+    return;
+  }
+
+  if (availabilityEmptyState) {
+    availabilityEmptyState.classList.add("d-none");
+  }
+  slots.forEach((slot) => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${escapeHtml(getWeekdayName(Number(slot.weekday)) || slot.weekday)}</td>
+      <td>${escapeHtml(formatTime(slot.start_time))}</td>
+      <td>${escapeHtml(formatTime(slot.end_time))}</td>
+      <td>${escapeHtml(slot.location || "-")}</td>
+      <td class="text-center">
+        <button class="btn btn-sm btn-outline-danger" data-remove-id="${
+          slot.availability_id
+        }">Eliminar</button>
+      </td>
+    `;
+    availabilityTableBody.appendChild(row);
+  });
+}
+
+async function createAvailability(event) {
+  event.preventDefault();
+  if (!ensureAuthenticated()) {
+    return;
+  }
+  const providerId = availabilityProviderSelect.value;
+  const weekday = availabilityWeekdaySelect.value;
+  const startTime = availabilityStartInput.value;
+  const endTime = availabilityEndInput.value;
+  const location = availabilityLocationInput.value.trim();
+
+  const missingFields = [
+    { label: "Proveedor", value: providerId },
+    { label: "Día", value: weekday },
+    { label: "Hora de inicio", value: startTime },
+    { label: "Hora de fin", value: endTime },
+  ].filter((field) => !field.value);
+
+  if (missingFields.length) {
+    const message = `Completa los siguientes campos: ${missingFields
+      .map((field) => field.label)
+      .join(", ")}`;
+    showFeedback(message, "warning");
+    alert(message);
+    return;
+  }
+
+  if (endTime <= startTime) {
+    const message = "La hora de fin debe ser posterior al inicio.";
+    showFeedback(message, "warning");
+    alert(message);
+    return;
+  }
+
+  const payload = {
+    provider_id: Number(providerId),
+    weekday: Number(weekday),
+    start_time: startTime,
+    end_time: endTime,
+  };
+  if (location) {
+    payload.location = location;
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/provider-availability`,
+      withAuthHeaders({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+    );
+    await handleResponse(response);
+    showFeedback("Horario registrado correctamente", "success");
+    const preservedProvider = providerId;
+    availabilityForm.reset();
+    availabilityProviderSelect.value = preservedProvider;
+    await refreshAvailabilityData();
+    await loadProviderAvailability(preservedProvider);
+  } catch (error) {
+    console.error("Error creando disponibilidad", error);
+  }
+}
+
+async function deleteAvailability(availabilityId) {
+  if (!ensureAuthenticated()) {
+    return;
+  }
+  if (
+    !confirm(
+      "¿Eliminar el bloque seleccionado? Las citas reservadas no se modificarán automáticamente."
+    )
+  ) {
+    return;
+  }
+  try {
+    const response = await fetch(
+      `${API_BASE}/provider-availability/${availabilityId}`,
+      withAuthHeaders({ method: "DELETE" })
+    );
+    await handleResponse(response);
+    showFeedback("Disponibilidad eliminada", "info");
+    const currentProvider = availabilityProviderSelect
+      ? availabilityProviderSelect.value
+      : "";
+    await refreshAvailabilityData();
+    if (currentProvider) {
+      await loadProviderAvailability(currentProvider);
+    }
+  } catch (error) {
+    console.error("Error eliminando disponibilidad", error);
   }
 }
 
@@ -535,13 +977,26 @@ async function loadAppointments() {
     appointments.forEach((appointment) => {
       const row = document.createElement("tr");
       const isCancelable = CANCELABLE_STATUSES.has(appointment.status);
+      const statusClass = STATUS_BADGE_CLASS[appointment.status] || "light";
       row.innerHTML = `
         <td>${appointment.appointment_id}</td>
-        <td>${appointment.patient_id}</td>
-        <td>${appointment.provider_id}</td>
-        <td>${appointment.start_at}</td>
-        <td>${appointment.end_at}</td>
-        <td><span class="badge text-bg-light">${appointment.status}</span></td>
+        <td>
+          <div class="fw-semibold">${escapeHtml(
+            getPatientLabel(appointment.patient_id)
+          )}</div>
+          <div class="text-muted small">ID ${appointment.patient_id}</div>
+        </td>
+        <td>
+          <div class="fw-semibold">${escapeHtml(
+            getProviderLabel(appointment.provider_id)
+          )}</div>
+          <div class="text-muted small">ID ${appointment.provider_id}</div>
+        </td>
+        <td>${escapeHtml(formatDateTimeDisplay(appointment.start_at))}</td>
+        <td>${escapeHtml(formatDateTimeDisplay(appointment.end_at))}</td>
+        <td><span class="badge text-bg-${statusClass}">${escapeHtml(
+          appointment.status
+        )}</span></td>
         <td class="text-center">
           ${
             isCancelable
@@ -627,6 +1082,9 @@ function flagMissingAppointmentFields(missingFields) {
 
 async function createAppointment(event) {
   event.preventDefault();
+  if (!ensureAuthenticated()) {
+    return;
+  }
 
   resetAppointmentFieldValidity();
 
@@ -672,16 +1130,19 @@ async function createAppointment(event) {
   }
 
   try {
-    const response = await fetch(`${API_BASE}/appointments`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        patient_id: Number(patientId),
-        provider_id: Number(providerId),
-        start_at: startAt,
-        end_at: endAt,
-      }),
-    });
+    const response = await fetch(
+      `${API_BASE}/appointments`,
+      withAuthHeaders({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patient_id: Number(patientId),
+          provider_id: Number(providerId),
+          start_at: startAt,
+          end_at: endAt,
+        }),
+      })
+    );
 
     await handleResponse(response);
     showFeedback("Cita creada correctamente", "success");
@@ -695,14 +1156,18 @@ async function createAppointment(event) {
 }
 
 async function cancelAppointment(appointmentId) {
+  if (!ensureAuthenticated()) {
+    return;
+  }
   if (!confirm("¿Cancelar la cita seleccionada?")) {
     return;
   }
 
   try {
-    const response = await fetch(`${API_BASE}/appointments/${appointmentId}/cancel`, {
-      method: "POST",
-    });
+    const response = await fetch(
+      `${API_BASE}/appointments/${appointmentId}/cancel`,
+      withAuthHeaders({ method: "POST" })
+    );
 
     await handleResponse(response);
     showFeedback("Cita cancelada correctamente", "info");
@@ -714,9 +1179,19 @@ async function cancelAppointment(appointmentId) {
 
 // ========== Listeners y arranque ==========
 document.addEventListener("DOMContentLoaded", () => {
+  restoreSessionFromStorage();
+  validateStoredSession();
   loadPatients();
   loadProviders();
+  refreshAvailabilityData();
   loadAppointments();
+
+  if (loginForm) {
+    loginForm.addEventListener("submit", handleLogin);
+  }
+  if (logoutButton) {
+    logoutButton.addEventListener("click", handleLogout);
+  }
 
   document.getElementById("patient-form").addEventListener("submit", createPatient);
   appointmentForm.addEventListener("submit", createAppointment);
@@ -727,6 +1202,28 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   document.getElementById("refresh-patients").addEventListener("click", loadPatients);
   document.getElementById("refresh-appointments").addEventListener("click", loadAppointments);
+  if (refreshAvailabilityButton) {
+    refreshAvailabilityButton.addEventListener("click", refreshAvailabilityData);
+  }
+
+  if (availabilityForm) {
+    availabilityForm.addEventListener("submit", createAvailability);
+  }
+  if (availabilityProviderSelect) {
+    availabilityProviderSelect.addEventListener("change", () => {
+      renderAvailabilityTable();
+    });
+  }
+  if (availabilityTableBody) {
+    availabilityTableBody.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-remove-id]");
+      if (!button) {
+        return;
+      }
+      const availabilityId = button.getAttribute("data-remove-id");
+      deleteAvailability(availabilityId);
+    });
+  }
 
   appointmentProviderSelect.addEventListener("change", (event) => {
     const providerId = event.target.value;

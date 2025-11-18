@@ -38,12 +38,69 @@
       <!-- Contenedor para mensajes de éxito / error -->
       <div id="feedback" class="alert d-none" role="alert"></div>
 
+      <div class="row g-4 mb-4">
+        <section class="col-12">
+          <div class="card" id="auth-card">
+            <div class="card-header bg-dark text-white">
+              <h2 class="h4 mb-0">Acceso seguro para la demo</h2>
+            </div>
+            <div class="card-body">
+              <div class="row g-4 align-items-center">
+                <div class="col-12 col-lg-8">
+                  <form id="login-form" class="row g-3" novalidate>
+                    <div class="col-md-4 col-lg-3">
+                      <label for="login-role" class="form-label">Perfil</label>
+                      <select id="login-role" class="form-select" required>
+                        <option value="" selected disabled>Selecciona tipo</option>
+                        <option value="patient">Paciente</option>
+                        <option value="provider">Proveedor</option>
+                      </select>
+                    </div>
+                    <div class="col-md-5 col-lg-4">
+                      <label for="login-email" class="form-label">Correo registrado</label>
+                      <input type="email" id="login-email" class="form-control" placeholder="demo@clinica.com" required />
+                    </div>
+                    <div class="col-md-3 col-lg-2">
+                      <label for="login-pin" class="form-label">NIP demo</label>
+                      <input type="password" id="login-pin" class="form-control" placeholder="4321" required />
+                      <div class="form-text">Configurable con <code>DEMO_LOGIN_PIN</code>.</div>
+                    </div>
+                    <div class="col-md-12 col-lg-3 d-flex gap-2 align-items-end">
+                      <button type="submit" class="btn btn-primary flex-fill">Iniciar sesión</button>
+                      <button type="button" id="logout-button" class="btn btn-outline-secondary flex-fill" disabled>
+                        Cerrar sesión
+                      </button>
+                    </div>
+                    <div class="col-12">
+                      <p id="session-summary" class="text-muted small mb-0">
+                        Inicia sesión para habilitar captura y administración de datos protegidos.
+                      </p>
+                    </div>
+                  </form>
+                </div>
+                <div class="col-12 col-lg-4">
+                  <p class="text-muted small mb-2">Casos de uso cubiertos del SRS:</p>
+                  <ul class="small mb-0">
+                    <li>F1-F2 · Inicio de sesión seguro para pacientes y proveedores.</li>
+                    <li>U1 · Registro y administración de pacientes.</li>
+                    <li>U5 · Configuración de disponibilidad semanal del proveedor.</li>
+                    <li>U1-U4 · Búsqueda de horarios y reserva de citas sin traslapes.</li>
+                    <li>U3 · Cancelación segura con bitácora.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
       <div class="row g-4">
         <!-- ====== Sección de Pacientes ====== -->
-        <section class="col-12 col-lg-6">
+        <section class="col-12 col-lg-6 col-xl-4">
           <div class="card">
-            <div class="card-header bg-primary text-white">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
               <h2 class="h4 mb-0">Pacientes</h2>
+              <span id="patient-auth-pill" class="badge text-bg-warning text-uppercase small">Requiere sesión activa</span>
             </div>
             <div class="card-body">
               <p class="text-muted small">Consulta, crea o elimina pacientes en tiempo real.</p>
@@ -93,10 +150,11 @@
         </section>
 
         <!-- ====== Sección de Citas ====== -->
-        <section class="col-12 col-lg-6">
+        <section class="col-12 col-lg-6 col-xl-4">
           <div class="card">
-            <div class="card-header bg-secondary text-white">
+            <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
               <h2 class="h4 mb-0">Citas</h2>
+              <span id="appointment-auth-pill" class="badge text-bg-warning text-uppercase small">Requiere sesión activa</span>
             </div>
             <div class="card-body">
               <p class="text-muted small">Agenda nuevas citas seleccionando paciente, proveedor e intervalos.</p>
@@ -194,6 +252,80 @@
                     <!-- Filas dinámicas -->
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ====== Sección de disponibilidad ====== -->
+        <section class="col-12 col-xl-4">
+          <div class="card">
+            <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+              <h2 class="h4 mb-0">Disponibilidad del proveedor</h2>
+              <span id="availability-auth-pill" class="badge text-bg-warning text-uppercase small">Requiere sesión activa</span>
+            </div>
+            <div class="card-body">
+              <p class="text-muted small">
+                Define horarios semanales compatibles con los casos de uso U5 y evita traslapes con citas activas.
+              </p>
+              <form id="availability-form" class="row g-3" novalidate>
+                <div class="col-12">
+                  <label for="availability-provider" class="form-label">Proveedor</label>
+                  <select id="availability-provider" class="form-select" required>
+                    <option value="" selected disabled>Proveedor para administrar horarios</option>
+                  </select>
+                </div>
+                <div class="col-sm-6">
+                  <label for="availability-weekday" class="form-label">Día</label>
+                  <select id="availability-weekday" class="form-select" required>
+                    <option value="" disabled selected>Selecciona día</option>
+                    <option value="1">Lunes</option>
+                    <option value="2">Martes</option>
+                    <option value="3">Miércoles</option>
+                    <option value="4">Jueves</option>
+                    <option value="5">Viernes</option>
+                    <option value="6">Sábado</option>
+                    <option value="7">Domingo</option>
+                  </select>
+                </div>
+                <div class="col-sm-3">
+                  <label for="availability-start" class="form-label">Inicio</label>
+                  <input type="time" id="availability-start" class="form-control" step="900" required />
+                </div>
+                <div class="col-sm-3">
+                  <label for="availability-end" class="form-label">Fin</label>
+                  <input type="time" id="availability-end" class="form-control" step="900" required />
+                </div>
+                <div class="col-12">
+                  <label for="availability-location" class="form-label">Ubicación (opcional)</label>
+                  <input type="text" id="availability-location" class="form-control" placeholder="Consultorio 3" />
+                </div>
+                <div class="col-12 d-grid">
+                  <button type="submit" class="btn btn-info text-white">Registrar horario</button>
+                </div>
+              </form>
+            </div>
+            <div class="card-body border-top">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h3 class="h5 mb-0">Bloques registrados</h3>
+                <button type="button" id="refresh-availability" class="btn btn-outline-info btn-sm">Actualizar</button>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle" id="availability-table">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Día</th>
+                      <th>Inicio</th>
+                      <th>Fin</th>
+                      <th>Ubicación</th>
+                      <th class="text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+                <p id="availability-empty-state" class="text-muted small mb-0">
+                  Selecciona un proveedor para consultar su disponibilidad recurrente.
+                </p>
               </div>
             </div>
           </div>

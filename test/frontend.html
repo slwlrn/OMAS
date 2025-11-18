@@ -38,63 +38,110 @@
       <!-- Contenedor para mensajes de éxito / error -->
       <div id="feedback" class="alert d-none" role="alert"></div>
 
-      <div class="row g-4 mb-4">
-        <section class="col-12">
-          <div class="card" id="auth-card">
-            <div class="card-header bg-dark text-white">
-              <h2 class="h4 mb-0">Acceso seguro para la demo</h2>
-            </div>
-            <div class="card-body">
-              <div class="row g-4 align-items-center">
-                <div class="col-12 col-lg-8">
-                  <form id="login-form" class="row g-3" novalidate>
-                    <div class="col-md-4 col-lg-3">
-                      <label for="login-role" class="form-label">Perfil</label>
-                      <select id="login-role" class="form-select" required>
-                        <option value="" selected disabled>Selecciona tipo</option>
-                        <option value="patient">Paciente</option>
-                        <option value="provider">Proveedor</option>
-                      </select>
-                    </div>
-                    <div class="col-md-5 col-lg-4">
-                      <label for="login-email" class="form-label">Correo registrado</label>
-                      <input type="email" id="login-email" class="form-control" placeholder="demo@clinica.com" required />
-                    </div>
-                    <div class="col-md-3 col-lg-2">
-                      <label for="login-pin" class="form-label">NIP demo</label>
-                      <input type="password" id="login-pin" class="form-control" placeholder="4321" required />
-                      <div class="form-text">Configurable con <code>DEMO_LOGIN_PIN</code>.</div>
-                    </div>
-                    <div class="col-md-12 col-lg-3 d-flex gap-2 align-items-end">
-                      <button type="submit" class="btn btn-primary flex-fill">Iniciar sesión</button>
-                      <button type="button" id="logout-button" class="btn btn-outline-secondary flex-fill" disabled>
-                        Cerrar sesión
-                      </button>
-                    </div>
-                    <div class="col-12">
-                      <p id="session-summary" class="text-muted small mb-0">
-                        Inicia sesión para habilitar captura y administración de datos protegidos.
-                      </p>
-                    </div>
-                  </form>
+      <ul class="nav nav-tabs mb-4" id="demo-tabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link active"
+            id="login-tab"
+            data-bs-toggle="tab"
+            data-bs-target="#login-pane"
+            type="button"
+            role="tab"
+            aria-controls="login-pane"
+            aria-selected="true"
+          >
+            Acceso seguro
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="demo-tab"
+            data-bs-toggle="tab"
+            data-bs-target="#demo-pane"
+            type="button"
+            role="tab"
+            aria-controls="demo-pane"
+            aria-selected="false"
+          >
+            Panel de pruebas
+          </button>
+        </li>
+      </ul>
+
+      <div class="tab-content" id="demo-tabs-content">
+        <div
+          class="tab-pane fade show active"
+          id="login-pane"
+          role="tabpanel"
+          aria-labelledby="login-tab"
+          tabindex="0"
+        >
+          <div class="row g-4 mb-4">
+            <section class="col-12">
+              <div class="card" id="auth-card">
+                <div class="card-header bg-dark text-white">
+                  <h2 class="h4 mb-0">Acceso seguro para la demo</h2>
                 </div>
-                <div class="col-12 col-lg-4">
-                  <p class="text-muted small mb-2">Casos de uso cubiertos del SRS:</p>
-                  <ul class="small mb-0">
-                    <li>F1-F2 · Inicio de sesión seguro para pacientes y proveedores.</li>
-                    <li>U1 · Registro y administración de pacientes.</li>
-                    <li>U5 · Configuración de disponibilidad semanal del proveedor.</li>
-                    <li>U1-U4 · Búsqueda de horarios y reserva de citas sin traslapes.</li>
-                    <li>U3 · Cancelación segura con bitácora.</li>
-                  </ul>
+                <div class="card-body">
+                  <div class="row g-4 align-items-center">
+                    <div class="col-12 col-lg-8">
+                      <form id="login-form" class="row g-3" novalidate>
+                        <div class="col-md-4 col-lg-3">
+                          <label for="login-role" class="form-label">Perfil</label>
+                          <select id="login-role" class="form-select" required>
+                            <option value="" selected disabled>Selecciona tipo</option>
+                            <option value="patient">Paciente</option>
+                            <option value="provider">Proveedor</option>
+                          </select>
+                        </div>
+                        <div class="col-md-5 col-lg-4">
+                          <label for="login-email" class="form-label">Correo registrado</label>
+                          <input type="email" id="login-email" class="form-control" placeholder="demo@clinica.com" required />
+                        </div>
+                        <div class="col-md-3 col-lg-2">
+                          <label for="login-pin" class="form-label">NIP demo</label>
+                          <input type="password" id="login-pin" class="form-control" placeholder="4321" required />
+                          <div class="form-text">Configurable con <code>DEMO_LOGIN_PIN</code>.</div>
+                        </div>
+                        <div class="col-md-12 col-lg-3 d-flex gap-2 align-items-end">
+                          <button type="submit" class="btn btn-primary flex-fill">Iniciar sesión</button>
+                          <button type="button" id="logout-button" class="btn btn-outline-secondary flex-fill" disabled>
+                            Cerrar sesión
+                          </button>
+                        </div>
+                        <div class="col-12">
+                          <p id="session-summary" class="text-muted small mb-0">
+                            Inicia sesión para habilitar captura y administración de datos protegidos.
+                          </p>
+                        </div>
+                      </form>
+                    </div>
+                    <div class="col-12 col-lg-4">
+                      <p class="text-muted small mb-2">Casos de uso cubiertos del SRS:</p>
+                      <ul class="small mb-0">
+                        <li>F1-F2 · Inicio de sesión seguro para pacientes y proveedores.</li>
+                        <li>U1 · Registro y administración de pacientes.</li>
+                        <li>U5 · Configuración de disponibilidad semanal del proveedor.</li>
+                        <li>U1-U4 · Búsqueda de horarios y reserva de citas sin traslapes.</li>
+                        <li>U3 · Cancelación segura con bitácora.</li>
+                      </ul>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
+            </section>
           </div>
-        </section>
-      </div>
+        </div>
 
-      <div class="row g-4">
+        <div
+          class="tab-pane fade"
+          id="demo-pane"
+          role="tabpanel"
+          aria-labelledby="demo-tab"
+          tabindex="0"
+        >
+          <div class="row g-4">
         <!-- ====== Sección de Pacientes ====== -->
         <section class="col-12 col-lg-6 col-xl-4">
           <div class="card">
@@ -330,6 +377,8 @@
             </div>
           </div>
         </section>
+          </div>
+        </div>
       </div>
     </main>
 

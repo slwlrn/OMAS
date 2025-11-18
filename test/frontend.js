@@ -249,7 +249,7 @@ async function handleLogin(event) {
   const pin = loginPinInput.value.trim();
 
   if (!userType || !email || !pin) {
-    const message = "Completa tipo de usuario, correo y NIP de demostración.";
+    const message = "Completa tipo de usuario, correo y NIP.";
     showFeedback(message, "warning");
     alert(message);
     return;

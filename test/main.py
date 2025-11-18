@@ -1,12 +1,14 @@
 # main.py
 import os
+import secrets
 from datetime import datetime, date, time, timezone, timedelta
 from decimal import Decimal
+from functools import wraps
 from pathlib import Path
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, g
 from sqlalchemy import (
     create_engine, Column, BigInteger, Integer, String, Text, Date, DateTime, Time,
-    Enum, ForeignKey, Boolean, Numeric, JSON
+    Enum, ForeignKey, Boolean, Numeric, JSON, func
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy.exc import IntegrityError
@@ -17,9 +19,89 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "mysql+pymysql://root:123456@localhost:3306/omasdb"
 )
+DEMO_LOGIN_PIN = os.getenv("DEMO_LOGIN_PIN", "4321")
+SESSION_DURATION_MINUTES = int(os.getenv("SESSION_DURATION_MINUTES", "60"))
+
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 Base = declarative_base()
+
+
+# ========= Sesiones ligeras =========
+SESSIONS = {}
+
+
+def _cleanup_sessions():
+    now = datetime.utcnow()
+    expired_tokens = [token for token, data in SESSIONS.items() if data["expires_at"] <= now]
+    for token in expired_tokens:
+        SESSIONS.pop(token, None)
+
+
+def _session_payload(session_data):
+    payload = {k: v for k, v in session_data.items() if k != "expires_at"}
+    payload["expires_at"] = serialize_value(session_data["expires_at"])
+    return payload
+
+
+def _resolve_session(token):
+    if not token:
+        return None
+    _cleanup_sessions()
+    session_data = SESSIONS.get(token)
+    if not session_data:
+        return None
+    if session_data["expires_at"] <= datetime.utcnow():
+        SESSIONS.pop(token, None)
+        return None
+    return session_data
+
+
+def create_session(user_type: str, user_obj):
+    token = secrets.token_urlsafe(32)
+    if user_type == "patient":
+        user_id = user_obj.patient_id
+        display_name = f"{user_obj.first_name} {user_obj.last_name}".strip()
+    else:
+        user_id = user_obj.provider_id
+        display_name = getattr(user_obj, "display_name", None) or user_obj.email
+
+    session_data = {
+        "token": token,
+        "user_type": user_type,
+        "user_id": user_id,
+        "display_name": display_name,
+        "email": user_obj.email,
+        "expires_at": datetime.utcnow() + timedelta(minutes=SESSION_DURATION_MINUTES),
+    }
+    SESSIONS[token] = session_data
+    return session_data
+
+
+def get_session_from_request():
+    token = request.headers.get("X-Session-Token") or request.args.get("session_token")
+    session = _resolve_session(token)
+    if session:
+        g.current_session = session
+    return session
+
+
+def require_auth(allowed_roles=None):
+    allowed = set(allowed_roles or []) if allowed_roles else None
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            session = get_session_from_request()
+            if not session:
+                return jsonify({"error": "Autenticación requerida. Inicia sesión para continuar."}), 401
+            if allowed and session["user_type"] not in allowed:
+                return jsonify({"error": "No cuentas con permisos para esta operación."}), 403
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 # ========= Util =========
 def serialize_value(v):
@@ -260,6 +342,7 @@ def register_crud(path: str, model, pk_column: str):
         finally:
             db.close()
 
+    @require_auth()
     def create_item():
         data = request.get_json(force=True, silent=False)
         db = SessionLocal()
@@ -303,6 +386,7 @@ def register_crud(path: str, model, pk_column: str):
         finally:
             db.close()
 
+    @require_auth()
     def update_item(pk):
         data = request.get_json(force=True, silent=False)
         db = SessionLocal()
@@ -341,6 +425,7 @@ def register_crud(path: str, model, pk_column: str):
         finally:
             db.close()
 
+    @require_auth()
     def delete_item(pk):
         db = SessionLocal()
         try:
@@ -387,6 +472,57 @@ def register_crud(path: str, model, pk_column: str):
 
 for path, model, pk in RESOURCES:
     register_crud(path, model, pk)
+
+
+@app.post("/auth/login")
+def auth_login():
+    data = request.get_json(force=True, silent=False) or {}
+    user_type = (data.get("user_type") or "").strip().lower()
+    email = (data.get("email") or "").strip().lower()
+    pin = str(data.get("pin") or "").strip()
+
+    if user_type not in {"patient", "provider"}:
+        return jsonify({"error": "El tipo de usuario debe ser 'patient' o 'provider'."}), 400
+    if not email or not pin:
+        return jsonify({"error": "Debes indicar email y NIP de demostración."}), 400
+    if pin != DEMO_LOGIN_PIN:
+        return jsonify({"error": "El NIP ingresado no es válido."}), 401
+
+    model = Patient if user_type == "patient" else Provider
+    db = SessionLocal()
+    try:
+        user = (
+            db.query(model)
+            .filter(func.lower(model.email) == email)
+            .first()
+        )
+        if not user:
+            return jsonify({"error": "El correo no está registrado."}), 404
+
+        session = create_session(user_type, user)
+        return jsonify({"token": session["token"], "user": _session_payload(session)})
+    finally:
+        db.close()
+
+
+@app.get("/auth/session")
+@require_auth()
+def auth_session():
+    session = g.get("current_session") or get_session_from_request()
+    return jsonify({"user": _session_payload(session)})
+
+
+@app.post("/auth/logout")
+def auth_logout():
+    token = request.headers.get("X-Session-Token")
+    if not token:
+        payload = request.get_json(silent=True) or {}
+        token = payload.get("token") if isinstance(payload, dict) else None
+    if not token:
+        return jsonify({"error": "Debes indicar el token de sesión a cerrar."}), 400
+    if token in SESSIONS:
+        SESSIONS.pop(token, None)
+    return jsonify({"ok": True})
 
 
 @app.get("/providers/<int:provider_id>/availability")
@@ -543,6 +679,7 @@ def provider_availability(provider_id):
 
 
 @app.post("/appointments/<int:pk>/cancel")
+@require_auth()
 def cancel_appointment(pk):
     db = SessionLocal()
     try:

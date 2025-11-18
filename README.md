@@ -16,11 +16,22 @@
 
 > **Tip:** La ruta `http://localhost:5000/api` devuelve un JSON con la lista de recursos expuestos por el backend si necesitas una verificación rápida del API.
 
+## Autenticación demo y casos de uso cubiertos
+- Todas las operaciones que modifican datos (pacientes, horarios y citas) requieren un token de sesión. Inicia sesión desde la tarjeta "Acceso seguro" ingresando el tipo de usuario (paciente o proveedor), el correo registrado en la base de datos y el NIP configurado.
+- Define el NIP mediante la variable `DEMO_LOGIN_PIN` (por defecto `4321`). Cambia este valor si compartirás la demo públicamente.
+- Tras iniciar sesión el frontend almacena el token en `localStorage` y lo adjunta en la cabecera `X-Session-Token` para cada petición POST/PUT/DELETE.
+- Los cinco casos de uso prioritarios del SRS disponibles en la interfaz son:
+  1. **F1-F2**: Inicio/cierre de sesión de pacientes o proveedores para proteger la información clínica.
+  2. **U1**: Alta y consulta de pacientes desde el panel con validación de campos.
+  3. **U5**: Definición y limpieza de disponibilidad semanal de proveedores sin traslapes.
+  4. **U1-U4**: Reserva de citas de 30 minutos basada en disponibilidad real, con verificación automática de conflictos.
+  5. **U3**: Cancelación segura de citas confirmadas, manteniendo bitácora del cambio de estado.
+
 ## Probar la interfaz web
 1. Con Waitress sirviendo la aplicación (ver sección anterior), abre tu navegador en `http://localhost:5000/`.
-2. Verifica que la tabla de pacientes carga los registros actuales y que puedes agregar un nuevo paciente con el formulario.
-3. Comprueba que los selectores de citas se llenan automáticamente y crea una cita de prueba para confirmar que los cambios se reflejan en la tabla.
-4. Asegúrate de que los mensajes de retroalimentación verde/rojo aparezcan tras cada acción para confirmar que la API respondió correctamente.
-5. Cancela una cita existente desde el botón de la tabla y verifica que el estado cambie a `canceled`.
-6. Intenta agendar otra cita con el mismo proveedor y un horario ya ocupado para comprobar que la interfaz muestre el error de horario bloqueado.
-7. Trata de eliminar un paciente con una cita en estado `booked` y confirma que la API impide la operación.
+2. Inicia sesión con un correo real de paciente o proveedor y el NIP configurado; verifica que el resumen muestre la expiración del token.
+3. Comprueba que la tabla de pacientes carga los registros actuales y que puedes agregar un nuevo paciente con el formulario autenticado.
+4. Configura uno o más horarios en la tarjeta de disponibilidad y verifica que aparezcan en la tabla y en el widget de consulta de horarios rápidos.
+5. Usa los selectores de citas para agendar una cita de prueba; asegúrate de que se respeten los 30 minutos y que los choques muestren un mensaje claro.
+6. Cancela una cita existente desde el botón de la tabla y verifica que el estado cambie a `canceled`.
+7. Trata de eliminar un paciente con una cita en estado `booked` y confirma que la API impide la operación y emite un mensaje explicativo.

@@ -337,6 +337,7 @@ def register_crud(path: str, model, pk_column: str):
     table = model.__tablename__
 
     # ----- handlers -----
+    @require_auth()
     def list_items():
         db = SessionLocal()
         try:
@@ -379,6 +380,7 @@ def register_crud(path: str, model, pk_column: str):
         finally:
             db.close()
 
+    @require_auth()
     def get_item(pk):
         db = SessionLocal()
         try:
@@ -534,6 +536,7 @@ def auth_logout():
 
 
 @app.get("/providers/<int:provider_id>/availability")
+@require_auth()
 def provider_availability(provider_id):
     db = SessionLocal()
     try:

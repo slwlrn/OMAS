@@ -33,8 +33,23 @@ const loginPinInput = document.getElementById("login-pin");
 const sessionSummary = document.getElementById("session-summary");
 const logoutButton = document.getElementById("logout-button");
 const patientAuthPill = document.getElementById("patient-auth-pill");
+const providerAuthPill = document.getElementById("provider-auth-pill");
 const appointmentAuthPill = document.getElementById("appointment-auth-pill");
 const availabilityAuthPill = document.getElementById("availability-auth-pill");
+const providersTableBody = document.querySelector("#providers-table tbody");
+const providersEmptyState = document.getElementById("providers-empty-state");
+const providerForm = document.getElementById("provider-form");
+const providerDisplayNameInput = document.getElementById("provider-display-name");
+const providerSpecialtyInput = document.getElementById("provider-specialty");
+const providerEmailInput = document.getElementById("provider-email");
+const providerPhoneInput = document.getElementById("provider-phone");
+const providerTimezoneSelect = document.getElementById("provider-timezone");
+const providerTimezoneDefaultValue = providerTimezoneSelect
+  ? providerTimezoneSelect.getAttribute("data-default-value") ||
+    providerTimezoneSelect.value ||
+    "UTC"
+  : "UTC";
+const refreshProvidersButton = document.getElementById("refresh-providers");
 const availabilityForm = document.getElementById("availability-form");
 const availabilityProviderSelect = document.getElementById("availability-provider");
 const availabilityWeekdaySelect = document.getElementById("availability-weekday");
@@ -177,7 +192,7 @@ function applySessionState() {
       sessionSummary.classList.remove("text-muted");
     } else {
       sessionSummary.textContent =
-        "Inicia sesión para habilitar la captura de pacientes, disponibilidad y citas.";
+        "Inicia sesión para habilitar la captura de pacientes, proveedores, disponibilidad y citas.";
       sessionSummary.classList.add("text-muted");
     }
   }
@@ -185,6 +200,7 @@ function applySessionState() {
     logoutButton.disabled = !hasSession;
   }
   updateAuthPill(patientAuthPill, hasSession);
+  updateAuthPill(providerAuthPill, hasSession);
   updateAuthPill(appointmentAuthPill, hasSession);
   updateAuthPill(availabilityAuthPill, hasSession);
   document.body.classList.toggle("session-active", hasSession);
@@ -745,6 +761,49 @@ async function deletePatient(patientId) {
 }
 
 // ========== Gestión de proveedores ==========
+function renderProvidersTable() {
+  if (!providersTableBody) {
+    return;
+  }
+
+  providersTableBody.innerHTML = "";
+  if (!Array.isArray(providersCache) || !providersCache.length) {
+    if (providersEmptyState) {
+      providersEmptyState.classList.remove("d-none");
+      providersEmptyState.textContent = "Aún no hay proveedores registrados.";
+    }
+    return;
+  }
+
+  if (providersEmptyState) {
+    providersEmptyState.classList.add("d-none");
+  }
+
+  providersCache
+    .slice()
+    .sort((a, b) => {
+      const nameA = (a.display_name || a.name || "").toLowerCase();
+      const nameB = (b.display_name || b.name || "").toLowerCase();
+      return nameA.localeCompare(nameB);
+    })
+    .forEach((provider) => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${escapeHtml(provider.provider_id)}</td>
+        <td>
+          <div class="fw-semibold">${escapeHtml(
+            provider.display_name || provider.name || "Proveedor"
+          )}</div>
+          <div class="text-muted small">${escapeHtml(provider.specialty || "Sin especialidad")}</div>
+        </td>
+        <td>${escapeHtml(provider.email || "-")}</td>
+        <td>${escapeHtml(provider.phone || "-")}</td>
+        <td>${escapeHtml(provider.timezone || "UTC")}</td>
+      `;
+      providersTableBody.appendChild(row);
+    });
+}
+
 function populateProviderSelect(selectElement, providers, placeholderText) {
   if (!selectElement) {
     return;
@@ -773,6 +832,7 @@ async function loadProviders() {
     const response = await fetch(`${API_BASE}/providers`);
     const providers = await handleResponse(response);
     providersCache = Array.isArray(providers) ? providers : [];
+    renderProvidersTable();
 
     populateProviderSelect(
       appointmentProviderSelect,
@@ -803,6 +863,74 @@ async function loadProviders() {
   } catch (error) {
     console.error("Error cargando proveedores", error);
     resetProviderAvailabilityDisplay();
+    providersCache = [];
+    renderProvidersTable();
+  }
+}
+
+async function createProvider(event) {
+  event.preventDefault();
+  if (!ensureAuthenticated()) {
+    return;
+  }
+
+  const displayName = providerDisplayNameInput
+    ? providerDisplayNameInput.value.trim()
+    : "";
+  const specialty = providerSpecialtyInput
+    ? providerSpecialtyInput.value.trim()
+    : "";
+  const email = providerEmailInput ? providerEmailInput.value.trim() : "";
+  const phone = providerPhoneInput ? providerPhoneInput.value.trim() : "";
+  const timezone = providerTimezoneSelect
+    ? providerTimezoneSelect.value || providerTimezoneDefaultValue
+    : providerTimezoneDefaultValue;
+
+  const missingFields = [
+    { label: "Nombre para mostrar", value: displayName },
+    { label: "Especialidad", value: specialty },
+    { label: "Email", value: email },
+  ].filter((field) => !field.value);
+
+  if (missingFields.length) {
+    const message = `Completa los siguientes campos: ${missingFields
+      .map((field) => field.label)
+      .join(", ")}`;
+    showFeedback(message, "warning");
+    alert(message);
+    return;
+  }
+
+  const payload = {
+    display_name: displayName,
+    specialty,
+    email,
+    timezone: timezone || "UTC",
+  };
+  if (phone) {
+    payload.phone = phone;
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/providers`,
+      withAuthHeaders({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+    );
+    await handleResponse(response);
+    showFeedback("Proveedor registrado correctamente", "success");
+    if (providerForm) {
+      providerForm.reset();
+    }
+    if (providerTimezoneSelect) {
+      providerTimezoneSelect.value = providerTimezoneDefaultValue;
+    }
+    await loadProviders();
+  } catch (error) {
+    console.error("Error creando proveedor", error);
   }
 }
 
@@ -1194,6 +1322,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   document.getElementById("patient-form").addEventListener("submit", createPatient);
+  providerForm.addEventListener("submit", createProvider);
   appointmentForm.addEventListener("submit", createAppointment);
   appointmentForm.addEventListener("reset", () => {
     updateAppointmentHiddenFields();
@@ -1201,6 +1330,7 @@ document.addEventListener("DOMContentLoaded", () => {
     resetProviderAvailabilityDisplay();
   });
   document.getElementById("refresh-patients").addEventListener("click", loadPatients);
+  refreshProvidersButton.addEventListener("click", loadProviders);
   document.getElementById("refresh-appointments").addEventListener("click", loadAppointments);
   if (refreshAvailabilityButton) {
     refreshAvailabilityButton.addEventListener("click", refreshAvailabilityData);

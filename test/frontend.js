@@ -165,7 +165,7 @@ function updateAuthPill(pill, isActive) {
 }
 
 function applySessionState() {
-  const hasSession = Boolean(sessionToken && activeSession);
+  const hasSession = hasActiveSession();
   if (sessionSummary) {
     if (hasSession) {
       const expiresText = activeSession.expires_at
@@ -188,6 +188,9 @@ function applySessionState() {
   updateAuthPill(appointmentAuthPill, hasSession);
   updateAuthPill(availabilityAuthPill, hasSession);
   document.body.classList.toggle("session-active", hasSession);
+  if (!hasSession) {
+    clearProtectedData();
+  }
 }
 
 function ensureAuthenticated() {
@@ -206,6 +209,68 @@ function withAuthHeaders(options = {}) {
     headers["X-Session-Token"] = sessionToken;
   }
   return { ...options, headers };
+}
+
+function hasActiveSession() {
+  return Boolean(sessionToken && activeSession);
+}
+
+function setSelectPlaceholder(selectElement, placeholderText) {
+  if (!selectElement) {
+    return;
+  }
+  selectElement.innerHTML = `<option value="" disabled selected>${placeholderText}</option>`;
+  selectElement.value = "";
+}
+
+function clearPatientsView() {
+  patientsCache = [];
+  if (patientsTableBody) {
+    patientsTableBody.innerHTML = "";
+  }
+  setSelectPlaceholder(
+    appointmentPatientSelect,
+    "Selecciona un paciente"
+  );
+}
+
+function clearProvidersView() {
+  providersCache = [];
+  setSelectPlaceholder(
+    appointmentProviderSelect,
+    "Selecciona un proveedor"
+  );
+  setSelectPlaceholder(
+    availabilityProviderSelect,
+    "Proveedor para administrar horarios"
+  );
+  resetProviderAvailabilityDisplay();
+}
+
+function clearAvailabilityView() {
+  availabilityCache = [];
+  if (availabilityTableBody) {
+    availabilityTableBody.innerHTML = "";
+  }
+  if (availabilityEmptyState) {
+    availabilityEmptyState.classList.remove("d-none");
+    availabilityEmptyState.textContent =
+      "Inicia sesión para revisar la disponibilidad del proveedor.";
+  }
+}
+
+function clearAppointmentsView() {
+  if (appointmentsTableBody) {
+    appointmentsTableBody.innerHTML = "";
+  }
+}
+
+function clearProtectedData() {
+  clearPatientsView();
+  clearProvidersView();
+  clearAvailabilityView();
+  clearAppointmentsView();
+  updateProviderSelectionState();
 }
 
 function restoreSessionFromStorage() {
@@ -230,16 +295,30 @@ async function validateStoredSession() {
     return;
   }
   try {
-    const response = await fetch(`${API_BASE}/auth/session`, {
-      headers: { "X-Session-Token": sessionToken },
-    });
+    const response = await fetch(
+      `${API_BASE}/auth/session`,
+      withAuthHeaders()
+    );
     const data = await handleResponse(response);
     if (data && data.user) {
       setSessionState(sessionToken, data.user);
+      await loadProtectedData();
     }
   } catch (error) {
     clearSessionState();
   }
+}
+
+async function loadProtectedData() {
+  if (!hasActiveSession()) {
+    return;
+  }
+  await Promise.all([
+    loadPatients(),
+    loadProviders(),
+    refreshAvailabilityData(),
+    loadAppointments(),
+  ]);
 }
 
 async function handleLogin(event) {
@@ -265,12 +344,7 @@ async function handleLogin(event) {
     setSessionState(data.token, data.user);
     showFeedback(`Sesión iniciada como ${data.user.display_name}`, "success");
     loginPinInput.value = "";
-    await Promise.all([
-      loadPatients(),
-      loadProviders(),
-      refreshAvailabilityData(),
-      loadAppointments(),
-    ]);
+    await loadProtectedData();
   } catch (error) {
     console.error("Error iniciando sesión", error);
   }
@@ -590,7 +664,7 @@ function showProviderAvailabilityLoading() {
 }
 
 async function loadProviderAvailability(providerId) {
-  if (!providerId) {
+  if (!providerId || !hasActiveSession()) {
     resetProviderAvailabilityDisplay();
     return;
   }
@@ -600,7 +674,10 @@ async function loadProviderAvailability(providerId) {
   showProviderAvailabilityLoading();
 
   try {
-    const response = await fetch(`${API_BASE}/providers/${providerId}/availability`);
+    const response = await fetch(
+      `${API_BASE}/providers/${providerId}/availability`,
+      withAuthHeaders()
+    );
     const data = await handleResponse(response);
 
     if (requestId !== providerAvailabilityRequestToken) {
@@ -643,8 +720,15 @@ async function loadProviderAvailability(providerId) {
 
 // ========== Gestión de pacientes ==========
 async function loadPatients() {
+  if (!hasActiveSession()) {
+    clearPatientsView();
+    return;
+  }
   try {
-    const response = await fetch(`${API_BASE}/patients`);
+    const response = await fetch(
+      `${API_BASE}/patients`,
+      withAuthHeaders()
+    );
     const patients = await handleResponse(response);
 
     // Limpiar tabla y selectores
@@ -769,8 +853,15 @@ function populateProviderSelect(selectElement, providers, placeholderText) {
 }
 
 async function loadProviders() {
+  if (!hasActiveSession()) {
+    clearProvidersView();
+    return;
+  }
   try {
-    const response = await fetch(`${API_BASE}/providers`);
+    const response = await fetch(
+      `${API_BASE}/providers`,
+      withAuthHeaders()
+    );
     const providers = await handleResponse(response);
     providersCache = Array.isArray(providers) ? providers : [];
 
@@ -807,8 +898,15 @@ async function loadProviders() {
 }
 
 async function refreshAvailabilityData() {
+  if (!hasActiveSession()) {
+    clearAvailabilityView();
+    return;
+  }
   try {
-    const response = await fetch(`${API_BASE}/provider-availability`);
+    const response = await fetch(
+      `${API_BASE}/provider-availability`,
+      withAuthHeaders()
+    );
     const data = await handleResponse(response);
     availabilityCache = Array.isArray(data) ? data : [];
     renderAvailabilityTable();
@@ -969,8 +1067,15 @@ async function deleteAvailability(availabilityId) {
 const CANCELABLE_STATUSES = new Set(["booked", "rescheduled"]);
 
 async function loadAppointments() {
+  if (!hasActiveSession()) {
+    clearAppointmentsView();
+    return;
+  }
   try {
-    const response = await fetch(`${API_BASE}/appointments`);
+    const response = await fetch(
+      `${API_BASE}/appointments`,
+      withAuthHeaders()
+    );
     const appointments = await handleResponse(response);
 
     appointmentsTableBody.innerHTML = "";
@@ -1181,10 +1286,7 @@ async function cancelAppointment(appointmentId) {
 document.addEventListener("DOMContentLoaded", () => {
   restoreSessionFromStorage();
   validateStoredSession();
-  loadPatients();
-  loadProviders();
-  refreshAvailabilityData();
-  loadAppointments();
+  loadProtectedData();
 
   if (loginForm) {
     loginForm.addEventListener("submit", handleLogin);
